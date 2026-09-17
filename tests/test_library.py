@@ -93,3 +93,27 @@ def test_fixture_library_matches_example_review():
         "packA/confirm.ogg",
         "packB/hit.mp3",
     ]
+
+
+# -- tag terms -----------------------------------------------------------------------
+
+
+def test_hash_terms_match_tags_from_the_store(root):
+    from audio_picker.annotations import LibraryAnnotations
+
+    lib = AudioLibrary(root)
+    store = LibraryAnnotations(root)
+    store.add_tag("packA/click.wav", "ui")
+    store.add_tag("packB/hit.mp3", "ui")
+    store.add_tag("packB/hit.mp3", "hit")
+    assert lib.search("#ui", annotations=store) == ["packA/click.wav", "packB/hit.mp3"]
+    assert lib.search("#UI packb", annotations=store) == ["packB/hit.mp3"]
+    assert lib.search("#ui #hit", annotations=store) == ["packB/hit.mp3"]
+    assert lib.search("#nope", annotations=store) == []
+    assert lib.search("#", annotations=store) == lib.paths, "a bare # is ignored"
+
+
+def test_hash_terms_match_nothing_without_a_store(root):
+    lib = AudioLibrary(root)
+    assert lib.search("#ui") == []
+    assert lib.search("packa") == ["packA/click.wav", "packA/sub/deep.OGG"]

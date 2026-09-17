@@ -3,7 +3,8 @@
 Walks the root once and keeps a sorted list of relative forward-slash paths
 with an audio suffix. Skips hidden directories, dot-prefixed files (macOS
 `._*` resource forks) and `__MACOSX` folders, which zip extraction leaves
-beside real packs.
+beside real packs. `search` accepts `#tag` terms when given a
+`LibraryAnnotations` store.
 """
 
 from __future__ import annotations
@@ -43,11 +44,29 @@ class AudioLibrary:
                     found.append(prefix + name)
         self._paths = sorted(found)
 
-    def search(self, query: str, limit: int = 500) -> list[str]:
-        """Case-insensitive; every whitespace-separated term must appear in the path."""
+    def search(self, query: str, limit: int = 500, annotations=None) -> list[str]:
+        """Case-insensitive. Every whitespace-separated term must match.
+
+        A term starting with `#` names a tag in `annotations` (a
+        `LibraryAnnotations`); other terms are path substrings. Tag terms
+        match nothing without a store. A bare `#` is ignored.
+        """
         terms = query.lower().split()
-        hits = [p for p in self._paths if all(t in p.lower() for t in terms)]
-        return hits[:limit]
+        tag_terms = [t[1:] for t in terms if t.startswith("#") and len(t) > 1]
+        path_terms = [t for t in terms if not t.startswith("#")]
+        if tag_terms and annotations is None:
+            return []
+        hits: list[str] = []
+        for p in self._paths:
+            low = p.lower()
+            if not all(t in low for t in path_terms):
+                continue
+            if tag_terms and not all(annotations.has_tag(p, t) for t in tag_terms):
+                continue
+            hits.append(p)
+            if len(hits) >= limit:
+                break
+        return hits
 
     @staticmethod
     def pack_folder(rel_path: str) -> str:

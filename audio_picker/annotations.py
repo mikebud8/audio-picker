@@ -25,7 +25,10 @@ _FILE_KEYS = ("rating", "tags", "note")
 
 
 class AnnotationsError(Exception):
-    """The sidecar file failed validation. The message names the problem."""
+    """The sidecar file failed validation, or a write was refused because the store is read-only after one did.
+
+    The message names the problem.
+    """
 
 
 def normalise_tag(raw: str) -> str:
