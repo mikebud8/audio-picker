@@ -30,6 +30,7 @@ class SlotPanel(QWidget):
     edit_slot_clicked = Signal()
     clear_selection_clicked = Signal()
     add_candidate_clicked = Signal()
+    active_changed = Signal(object)  # candidate id (str) or None, emitted only when it differs
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -38,6 +39,7 @@ class SlotPanel(QWidget):
         self._missing: set[str] = set()
         self._active: str | None = None
         self._playing: str | None = None
+        self._emitted_active: str | None = None
         self.rows: list[CandidateRow] = []
         self.radio_group = QButtonGroup(self)
 
@@ -128,6 +130,7 @@ class SlotPanel(QWidget):
         self.empty_label.setVisible(not has_slot)
         if slot is None:
             self.gap_notes.setVisible(False)
+            self._update_active()
             return
 
         for i, candidate in enumerate(slot.candidates, 1):
@@ -200,3 +203,6 @@ class SlotPanel(QWidget):
         active = self.active_candidate_id()
         for row in self.rows:
             row.set_active(row.cid == active)
+        if active != self._emitted_active:
+            self._emitted_active = active
+            self.active_changed.emit(active)

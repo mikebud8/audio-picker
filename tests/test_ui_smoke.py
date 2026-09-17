@@ -484,6 +484,25 @@ def test_loop_and_volume_reach_the_player_and_persist(win):
     assert win.settings.value("transport/volume", type=int) == 35
 
 
+# -- active candidate signal -----------------------------------------------------------
+
+
+def test_panel_emits_active_changed_on_slot_change_play_and_empty_slot(qtbot, win):
+    seen: list = []
+    win.panel.active_changed.connect(seen.append)
+    win.tree.select_slot("ui_confirm")  # one candidate: A003 becomes active by default
+    assert seen[-1] == "A003"
+    win.tree.select_slot("ui_click")
+    assert seen[-1] == "A001"
+    press(qtbot, win, Qt.Key.Key_2)
+    assert seen[-1] == "A002"
+    n = len(seen)
+    press(qtbot, win, Qt.Key.Key_2)  # stopping keeps A002 active: no new emission
+    assert len(seen) == n
+    win.tree.select_slot("horn_distant")
+    assert seen[-1] is None
+
+
 def test_space_plays_first_candidate_when_nothing_loaded(qtbot, win):
     press(qtbot, win, Qt.Key.Key_Space)
     assert win.player.calls[-1] == ("play", FIXTURE_ROOT / "packA" / "click.wav")
