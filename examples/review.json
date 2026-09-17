@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "project": "example",
+  "root": "../tests/fixtures/audio",
+  "categories": [
+    "UI",
+    "Battle",
+    "Unfilled"
+  ],
+  "packs": {
+    "pack_a": {
+      "name": "Pack A",
+      "folder": "packA",
+      "license": "CC0; see packA/LICENSE.txt"
+    },
+    "pack_b": {
+      "name": "Pack B",
+      "folder": "packB",
+      "license": "Paid; invoice 2026-01"
+    }
+  },
+  "slots": [
+    {
+      "id": "ui_click",
+      "category": "UI",
+      "function": "Button press acknowledgement",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": "A001",
+      "candidates": [
+        {
+          "id": "A001",
+          "path": "packA/click.wav",
+          "pack": "pack_a",
+          "role": "first",
+          "why": "Short, dry, neutral.",
+          "listen_for": "Does it get annoying after fifty presses?",
+          "proposed_use": "Every button.",
+          "decision": "yay",
+          "notes": "Good."
+        },
+        {
+          "id": "A002",
+          "path": "packA/confirm.ogg",
+          "pack": "pack_a",
+          "role": "alternative",
+          "why": "Slightly warmer tone.",
+          "listen_for": "Tail length.",
+          "proposed_use": "Primary buttons only.",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ui_confirm",
+      "category": "UI",
+      "function": "Dialog confirmed",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A003",
+          "path": "packA/confirm.ogg",
+          "pack": "pack_a",
+          "role": "first",
+          "why": "Same file as A002; reused on purpose.",
+          "listen_for": "",
+          "proposed_use": "",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "battle_hit",
+      "category": "Battle",
+      "function": "Melee strike connects",
+      "priority": "later",
+      "notes": "Both rejected; need fresh candidates.",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A004",
+          "path": "packB/hit.mp3",
+          "pack": "pack_b",
+          "role": "first",
+          "why": "Named hit.",
+          "listen_for": "Too cartoonish?",
+          "proposed_use": "",
+          "decision": "nay",
+          "notes": "Too cartoonish."
+        },
+        {
+          "id": "A005",
+          "path": "packB/hit.mp3",
+          "pack": "pack_b",
+          "role": "variation",
+          "why": "Pitch-shifted variant idea.",
+          "listen_for": "",
+          "proposed_use": "",
+          "decision": "nay",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "battle_miss",
+      "category": "Battle",
+      "function": "Melee strike misses",
+      "priority": "optional",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A006",
+          "path": "loose/miss.wav",
+          "pack": null,
+          "role": "reference",
+          "why": "Loose file outside any pack.",
+          "listen_for": "",
+          "proposed_use": "",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "horn_distant",
+      "category": "Unfilled",
+      "function": "Authored detection tell",
+      "priority": "later",
+      "notes": "No horn sample found.\n\nLeave silent until a candidate is approved.",
+      "selected": null,
+      "candidates": []
+    }
+  ]
+}
