@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
 from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
 from audio_picker.ui.annotation_editor import AnnotationEditor
@@ -262,9 +263,22 @@ def test_a_long_pack_folder_does_not_swallow_the_file_name(qtbot, editor):
     assert ".wav" in editor.path_label.text()
 
 
-def test_the_chip_area_keeps_its_wrapped_height(qtbot, editor):
+def test_the_chip_area_keeps_its_wrapped_height(qtbot, editor, store):
     editor.set_path("packA/click.wav")
     assert editor.chips_container.minimumHeight() > 0
+
+    for i in range(12):
+        store.add_tag("packB/hit.mp3", f"tag-{i}")
+    editor.set_path("packB/hit.mp3")
+    # Tall enough that the box layout isn't squeezing every widget below its natural size;
+    # otherwise the container's actual height can undershoot heightForWidth() (Qt's deficit
+    # distribution during a squeeze doesn't re-run height-for-width on the final column width).
+    editor.resize(280, 450)
+    QApplication.processEvents()
+    assert editor.chips_container.height() == editor.chips_layout.heightForWidth(editor.chips_container.width())
+    for chip in editor.chips:
+        assert editor.chips_container.rect().contains(chip.geometry())
+
     editor.set_path(None)
     assert editor.chips_container.minimumHeight() == 0
 
