@@ -14,7 +14,9 @@
 - Opening another review with a different root closes an open standalone viewer instead of re-pointing it.
 - Empty entries are dropped immediately in memory rather than only at save time; the on-disk result is identical.
 - The editor gets an `escape()` method for hosts with a window-level Escape shortcut and an `escape_pressed` signal for the dialog, which has none.
-- The editor emits `changed(rel)`; hosts restart their save timer on that signal rather than the editor calling `mark_dirty()`.
+- The editor emits `changed(rel)`; hosts forward it to `AnnotationHub.notify_changed`, which owns the save timer and fans the change out to every other host.
+- The review's yes/no "Quit without saving?" dialog is replaced by the three-way unsaved-changes dialog from spec section 6, so one dialog covers both files on quit and on opening another review.
+- The standalone viewer gets a Rescan action (F5) so a fixed sidecar can be recovered without restarting.
 
 **Conventions for every task:**
 - Run `.venv/Scripts/ruff check audio_picker tests` and `.venv/Scripts/ruff format audio_picker tests` before each commit. Line length is 120, imports sorted.
@@ -32,11 +34,13 @@
 | `audio_picker/library.py` (modify) | `search()` gains `annotations=` and `#tag` terms. |
 | `audio_picker/ui/path_delegate.py` (new) | `PathDelegate` moved out of `dialogs.py`, with an optional muted summary drawn after the path. |
 | `audio_picker/ui/keys.py` (new) | `text_field_focused()` moved out of `MainWindow` so `LibraryWindow` shares the single-key rule. |
-| `audio_picker/ui/annotation_editor.py` (new) | `FlowLayout`, `TagChip`, `AnnotationEditor`. |
+| `audio_picker/ui/annotation_editor.py` (new) | `FlowLayout`, `TagChip`, `AnnotationEditor`. Disabled while the store is read-only. |
+| `audio_picker/ui/annotation_hub.py` (new) | `AnnotationHub`: store reference, save timer, `changed` / `reloaded` / `save_failed` signals. |
+| `tests/test_annotation_hub.py` (new) | Hub tests. |
 | `audio_picker/ui/slot_panel.py` (modify) | New `active_changed` signal. |
-| `audio_picker/ui/dialogs.py` (modify) | `AddCandidateDialog` takes the store and hosts an editor; `Dialogs.add_candidate` passes it through. |
+| `audio_picker/ui/dialogs.py` (modify) | `AddCandidateDialog` takes the hub and hosts an editor; `Dialogs.add_candidate` passes it through; `Dialogs.unsaved` replaces `quit_without_saving`. |
 | `audio_picker/ui/library_window.py` (new) | `LibraryWindow`. |
-| `audio_picker/ui/main_window.py` (modify) | Store creation, save timer, flush, dock, View menu, `saveState`, rescan reload, root switch, viewer launch. |
+| `audio_picker/ui/main_window.py` (modify) | Hub creation, `flush() -> bool`, unsaved-changes settling on quit and open, dock, View menu, `saveState`, rescan reload, root switch, viewer launch. |
 | `audio_picker/ui/app.py` (modify) | `run_library(root)`. |
 | `audio_picker/cli.py` (modify) | `library --root DIR` subcommand. |
 | `tests/test_annotations.py` (new) | Store tests, no Qt. |
@@ -1016,7 +1020,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt
 
-from audio_picker.annotations import LibraryAnnotations
+from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
 from audio_picker.ui.annotation_editor import AnnotationEditor
 
 
@@ -1150,6 +1154,20 @@ def test_escape_clears_the_tag_field_and_signals(qtbot, editor):
     with qtbot.waitSignal(editor.escape_pressed):
         qtbot.keyClick(editor.tag_input, Qt.Key.Key_Escape)
     assert editor.tag_input.text() == ""
+
+
+def test_read_only_store_shows_but_disables_editing(qtbot, tmp_path):
+    (tmp_path / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    broken = LibraryAnnotations(tmp_path)
+    assert broken.read_only
+    e = AnnotationEditor(broken)
+    qtbot.addWidget(e)
+    e.set_path("a.wav")
+    assert "a.wav" in e.path_label.text()
+    assert not e.tag_input.isEnabled()
+    assert not e.note.isEnabled()
+    assert not any(s.isEnabled() for s in e.stars)
+    assert "read-only" in e.tag_input.placeholderText()
 
 
 def test_completer_matches_anywhere_case_insensitively(editor):
@@ -1392,11 +1410,15 @@ class AnnotationEditor(QWidget):
         self._loading = True
         try:
             rel = self._rel
-            enabled = rel is not None
+            read_only = self._store.read_only
+            enabled = rel is not None and not read_only
             for star in self.stars:
                 star.setEnabled(enabled)
             self.tag_input.setEnabled(enabled)
             self.note.setEnabled(enabled)
+            self.tag_input.setPlaceholderText(
+                "Library notes are read-only until the sidecar is fixed" if read_only else "Add tag (Enter or comma)"
+            )
             self._completer_model.setStringList(self._store.vocabulary())
             if rel is None:
                 self.path_label.setText('<span style="color: %s">No file</span>' % dim_color().name())
@@ -1638,20 +1660,218 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Store in the review window, save timer, flush, rescan, root switch
+### Task 8: `AnnotationHub`
 
 **Files:**
-- Modify: `audio_picker/ui/main_window.py`
-- Modify: `tests/test_ui_smoke.py`
-
-This task wires the store without any new widget. The dock comes in Task 9.
+- Create: `audio_picker/ui/annotation_hub.py`
+- Create: `tests/test_annotation_hub.py`
 
 - [ ] **Step 1: Write the failing tests**
 
-In `tests/test_ui_smoke.py`, add imports at the top:
+Create `tests/test_annotation_hub.py`:
+
+```python
+"""AnnotationHub: change fan-out and the debounced sidecar save (spec section 3.5)."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
+from audio_picker.ui.annotation_hub import AnnotationHub
+
+
+@pytest.fixture
+def hub(qtbot, tmp_path: Path) -> AnnotationHub:
+    return AnnotationHub(LibraryAnnotations(tmp_path))
+
+
+def test_notify_changed_emits_and_autosaves(qtbot, hub, tmp_path):
+    hub.store.set_rating("a.wav", 3)
+    with qtbot.waitSignal(hub.changed) as blocker:
+        hub.notify_changed("a.wav")
+    assert blocker.args == ["a.wav"]
+    qtbot.waitUntil(lambda: (tmp_path / SIDECAR_NAME).exists(), timeout=3000)
+    assert not hub.store.dirty
+
+
+def test_flush_saves_now_and_reports_true(hub, tmp_path):
+    hub.store.set_note("a.wav", "x")
+    hub.notify_changed("a.wav")
+    assert hub.flush()
+    assert LibraryAnnotations(tmp_path).get("a.wav").note == "x"
+    assert hub.flush(), "nothing pending counts as success"
+
+
+def test_failed_save_emits_save_failed_and_keeps_dirty(qtbot, hub, tmp_path):
+    (tmp_path / SIDECAR_NAME).mkdir()
+    hub.store.set_rating("a.wav", 1)
+    with qtbot.waitSignal(hub.save_failed) as blocker:
+        assert not hub.flush()
+    assert "library notes" in blocker.args[0].lower()
+    assert hub.store.dirty
+
+
+def test_reload_refuses_a_dirty_store_but_still_emits(qtbot, hub):
+    hub.store.set_rating("a.wav", 1)
+    with qtbot.waitSignal(hub.reloaded):
+        text = hub.reload()
+    assert "not reloaded" in text
+    assert hub.store.get("a.wav").rating == 1
+
+
+def test_reload_reads_the_disk_when_clean(qtbot, hub, tmp_path):
+    good = {"version": 1, "tags": [], "files": {"b.wav": {"rating": 2}}}
+    (tmp_path / SIDECAR_NAME).write_text(json.dumps(good), encoding="utf-8")
+    with qtbot.waitSignal(hub.reloaded):
+        text = hub.reload()
+    assert text == "library notes reloaded"
+    assert hub.store.get("b.wav").rating == 2
+
+
+def test_reload_reports_a_still_broken_file(hub, tmp_path):
+    (tmp_path / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    assert hub.reload() == "library notes not loaded"
+    assert hub.store.read_only
+
+
+def test_set_store_stops_the_timer_and_emits(qtbot, hub, tmp_path):
+    hub.store.set_rating("a.wav", 1)
+    hub.notify_changed("a.wav")
+    other = LibraryAnnotations(tmp_path / "other")
+    with qtbot.waitSignal(hub.reloaded):
+        hub.set_store(other)
+    assert hub.store is other
+    qtbot.wait(700)
+    assert not (tmp_path / SIDECAR_NAME).exists(), "the old store was dropped, not saved"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `.venv/Scripts/python -m pytest tests/test_annotation_hub.py -q`
+Expected: FAIL with `ModuleNotFoundError: No module named 'audio_picker.ui.annotation_hub'`
+
+- [ ] **Step 3: Implement**
+
+Create `audio_picker/ui/annotation_hub.py`:
+
+```python
+"""The one Qt object between the pure annotations store and its hosts (spec section 3.5).
+
+Hosts call `notify_changed` after every write and subscribe to `changed`
+and `reloaded`. The hub owns the debounced save; the window that created
+the hub shows `save_failed`.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import QObject, QTimer, Signal
+
+from ..annotations import AnnotationsError, LibraryAnnotations
+
+AUTOSAVE_MS = 500
+
+
+class AnnotationHub(QObject):
+    changed = Signal(str)  # a host wrote this relative path to the store
+    reloaded = Signal()  # store replaced or re-read, or the library index changed: re-read everything
+    save_failed = Signal(str)  # message for the owning window to show
+
+    def __init__(self, store: LibraryAnnotations, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(AUTOSAVE_MS)
+        self._timer.timeout.connect(self._autosave)
+
+    def notify_changed(self, rel: str) -> None:
+        """Call after every write to the store."""
+        self._timer.start()
+        self.changed.emit(rel)
+
+    def set_store(self, store: LibraryAnnotations) -> None:
+        """Swap in the store for another root. The old one must already be settled or discarded."""
+        self._timer.stop()
+        self.store = store
+        self.reloaded.emit()
+
+    def reload(self) -> str:
+        """Rescan hook: re-read the sidecar unless dirty; always emit `reloaded`. Returns a status fragment."""
+        if self.store.dirty:
+            text = "library notes not reloaded (unsaved edits)"
+        else:
+            try:
+                self.store.reload()
+            except AnnotationsError:
+                pass  # recorded in store.load_error; the store is empty and read_only
+            text = "library notes not loaded" if self.store.read_only else "library notes reloaded"
+        self.reloaded.emit()
+        return text
+
+    def _autosave(self) -> None:
+        if self.store.dirty:
+            self.save()
+
+    def save(self) -> bool:
+        """Write if dirty. False means the sidecar is still unsaved and `save_failed` was emitted."""
+        if not self.store.dirty or self.store.read_only:
+            return True
+        try:
+            self.store.save()
+        except OSError as e:
+            self._timer.stop()
+            self.save_failed.emit(f"Could not write library notes to {self.store.path}:\n{e}")
+            return False
+        return True
+
+    def flush(self) -> bool:
+        self._timer.stop()
+        return self.save()
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `.venv/Scripts/python -m pytest tests/test_annotation_hub.py -q`
+Expected: all PASS.
+
+- [ ] **Step 5: Lint and commit**
+
+```bash
+.venv/Scripts/ruff check audio_picker tests && .venv/Scripts/ruff format audio_picker tests
+git add audio_picker/ui/annotation_hub.py tests/test_annotation_hub.py
+git commit -m "Add AnnotationHub: shared change fan-out and debounced sidecar save
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 9: Hub in the review window; flush, unsaved-changes settling, rescan, root switch
+
+**Files:**
+- Modify: `audio_picker/ui/main_window.py`
+- Modify: `audio_picker/ui/dialogs.py` (`Dialogs.unsaved` replaces `quit_without_saving`)
+- Modify: `tests/test_ui_smoke.py`
+
+No dock yet; that is Task 10.
+
+- [ ] **Step 1: Update the fake and the existing quit test**
+
+In `tests/test_ui_smoke.py`, add imports:
 
 ```python
 from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
+from audio_picker.ui.annotation_hub import AnnotationHub
+```
+
+In `FakeDialogs.__init__` replace `self.quit_answer = True` with `self.unsaved_answer = "discard"`, and replace the `quit_without_saving` method with:
+
+```python
+    def unsaved(self, parent, action: str, files: list[str]) -> str:
+        self.calls.append(("unsaved", action, tuple(files)))
+        return self.unsaved_answer
 ```
 
 Add a fixture after `review_file`:
@@ -1665,88 +1885,123 @@ def tmp_root(tmp_path: Path) -> Path:
     return dst
 ```
 
-Append tests:
+Replace `test_quit_after_cancelled_save_asks_for_confirmation` with:
 
 ```python
-# -- library annotations store ----------------------------------------------------------
+def test_quit_after_cancelled_save_asks_and_can_be_cancelled(qtbot, win, review_file):
+    _rewrite_on_disk(review_file, "edited-elsewhere")
+    win.tree.select_slot("ui_confirm")
+    press(qtbot, win, Qt.Key.Key_Y)
+    win.dialogs.unsaved_answer = "cancel"
+    assert not win.close()
+    assert ("unsaved", "quit", ("review.json",)) in win.dialogs.calls
+    win.dialogs.unsaved_answer = "discard"
+    assert win.close()
+```
+
+- [ ] **Step 2: Write the failing tests**
+
+Append to `tests/test_ui_smoke.py`:
+
+```python
+# -- library annotations hub -------------------------------------------------------------
 
 
-def test_window_builds_the_store_for_its_root(make_win, tmp_root):
+def test_window_builds_the_hub_for_its_root(make_win, tmp_root):
     w = make_win(tmp_root)
-    assert isinstance(w.annotations, LibraryAnnotations)
-    assert w.annotations.path == tmp_root / SIDECAR_NAME
+    assert isinstance(w.hub, AnnotationHub)
+    assert w.hub.store.path == tmp_root / SIDECAR_NAME
 
 
-def test_annotation_edit_autosaves_the_sidecar(qtbot, make_win, tmp_root):
+def test_hub_change_autosaves_the_sidecar(qtbot, make_win, tmp_root):
     w = make_win(tmp_root)
-    w.annotations.set_rating("packA/click.wav", 4)
-    w.annotation_changed("packA/click.wav")
+    w.hub.store.set_rating("packA/click.wav", 4)
+    w.hub.notify_changed("packA/click.wav")
     qtbot.waitUntil(lambda: (tmp_root / SIDECAR_NAME).exists(), timeout=3000)
     assert LibraryAnnotations(tmp_root).get("packA/click.wav").rating == 4
-    assert not w.annotations.dirty
 
 
 def test_ctrl_s_flushes_the_sidecar(qtbot, make_win, tmp_root):
     w = make_win(tmp_root)
-    w.annotations.add_tag("packA/click.wav", "ui")
-    w.annotation_changed("packA/click.wav")
+    w.hub.store.add_tag("packA/click.wav", "ui")
+    w.hub.notify_changed("packA/click.wav")
     press(qtbot, w, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
     assert LibraryAnnotations(tmp_root).has_tag("packA/click.wav", "ui")
 
 
 def test_close_flushes_the_sidecar(make_win, tmp_root):
     w = make_win(tmp_root)
-    w.annotations.set_note("packA/click.wav", "bye")
-    w.annotation_changed("packA/click.wav")
+    w.hub.store.set_note("packA/click.wav", "bye")
+    w.hub.notify_changed("packA/click.wav")
     assert w.close()
     assert LibraryAnnotations(tmp_root).get("packA/click.wav").note == "bye"
 
 
-def test_sidecar_save_failure_reports_and_keeps_dirty(qtbot, make_win, tmp_root):
-    w = make_win(tmp_root)
+def _break_sidecar_saves(w, tmp_root) -> None:
+    """A directory where the sidecar should be makes every save raise OSError."""
     (tmp_root / SIDECAR_NAME).mkdir()
-    w.annotations.set_rating("packA/click.wav", 2)
-    w.annotation_changed("packA/click.wav")
-    qtbot.waitUntil(lambda: any(c[0] == "error" and "library" in c[1].lower() for c in w.dialogs.calls), timeout=3000)
-    assert w.annotations.dirty
+    w.hub.store.set_rating("packA/click.wav", 2)
+    w.hub.notify_changed("packA/click.wav")
 
 
-def test_malformed_sidecar_is_reported_once_and_edits_are_not_saved(qtbot, make_win, tmp_root):
-    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+def test_sidecar_save_failure_shows_an_error(qtbot, make_win, tmp_root):
     w = make_win(tmp_root)
-    assert sum(1 for c in w.dialogs.calls if c[0] == "error" and "version" in c[1]) == 1
-    assert w.annotations.read_only
-    assert w.annotations_warning.isVisible()
-    w.annotations.set_rating("packA/click.wav", 2)
-    w.annotation_changed("packA/click.wav")
-    qtbot.wait(700)
-    assert (tmp_root / SIDECAR_NAME).read_text(encoding="utf-8") == '{"version": 9}'
+    _break_sidecar_saves(w, tmp_root)
+    qtbot.waitUntil(
+        lambda: any(c[0] == "error" and "library notes" in c[1].lower() for c in w.dialogs.calls), timeout=3000
+    )
+    assert w.hub.store.dirty
 
 
-def test_rescan_reloads_a_clean_sidecar_and_recovers_from_read_only(make_win, tmp_root):
-    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+def test_quit_with_unsaved_sidecar_asks_and_cancel_keeps_the_window(make_win, tmp_root):
     w = make_win(tmp_root)
-    good = {"version": 1, "tags": [], "files": {"packA/click.wav": {"tags": ["fixed"]}}}
-    (tmp_root / SIDECAR_NAME).write_text(json.dumps(good), encoding="utf-8")
-    w.actions["rescan"].trigger()
-    assert not w.annotations.read_only
-    assert not w.annotations_warning.isVisible()
-    assert w.annotations.has_tag("packA/click.wav", "fixed")
+    _break_sidecar_saves(w, tmp_root)
+    w.dialogs.unsaved_answer = "cancel"
+    assert not w.close()
+    assert ("unsaved", "quit", (SIDECAR_NAME,)) in w.dialogs.calls
+    w.dialogs.unsaved_answer = "discard"
+    assert w.close()
 
 
-def test_rescan_keeps_a_dirty_store_and_says_so(make_win, tmp_root):
+def test_quit_retry_succeeds_once_the_obstacle_is_gone(make_win, tmp_root):
     w = make_win(tmp_root)
-    w.annotations.add_tag("packA/click.wav", "mine")
-    w.annotation_changed("packA/click.wav")
-    w.actions["rescan"].trigger()  # fires before the 500 ms autosave, so the store is still dirty
-    assert w.annotations.has_tag("packA/click.wav", "mine")
-    assert "not reloaded" in w.statusBar().currentMessage()
+    _break_sidecar_saves(w, tmp_root)
+    answers = iter(["retry", "cancel"])
+
+    def unsaved(parent, action, files):
+        w.dialogs.calls.append(("unsaved", action, tuple(files)))
+        (tmp_root / SIDECAR_NAME).rmdir()
+        return next(answers)
+
+    w.dialogs.unsaved = unsaved
+    assert w.close()
+    assert LibraryAnnotations(tmp_root).get("packA/click.wav").rating == 2
+    assert [c for c in w.dialogs.calls if c[0] == "unsaved"] == [("unsaved", "quit", (SIDECAR_NAME,))]
 
 
-def test_open_other_review_flushes_and_switches_the_store(make_win, tmp_root, tmp_path):
+def test_unsaved_dialog_names_both_files(qtbot, make_win, tmp_root, review_file):
     w = make_win(tmp_root)
-    w.annotations.add_tag("packA/click.wav", "first")
-    w.annotation_changed("packA/click.wav")
+    _break_sidecar_saves(w, tmp_root)
+    _rewrite_on_disk(review_file, "edited-elsewhere")  # the review save will hit the conflict dialog (cancel)
+    w.tree.select_slot("ui_confirm")
+    press(qtbot, w, Qt.Key.Key_Y)
+    w.dialogs.unsaved_answer = "cancel"
+    assert not w.close()
+    assert ("unsaved", "quit", ("review.json", SIDECAR_NAME)) in w.dialogs.calls
+
+
+def test_open_other_with_unsaved_sidecar_cancel_keeps_everything(make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    _break_sidecar_saves(w, tmp_root)
+    w.dialogs.unsaved_answer = "cancel"
+    w.dialogs.open_target = tmp_path / "never.json"
+    w.actions["open"].trigger()
+    assert ("unsaved", "open another review", (SIDECAR_NAME,)) in w.dialogs.calls
+    assert ("open_review_path",) not in w.dialogs.calls
+    assert w.hub.store.dirty
+
+
+def _other_review(tmp_path: Path) -> tuple[Path, Path]:
     other_root = tmp_path / "other_audio"
     shutil.copytree(FIXTURE_ROOT, other_root)
     other_review = tmp_path / "other" / "review.json"
@@ -1754,52 +2009,100 @@ def test_open_other_review_flushes_and_switches_the_store(make_win, tmp_root, tm
     data = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     data["root"] = "../other_audio"
     other_review.write_text(json.dumps(data), encoding="utf-8")
+    return other_review, other_root
+
+
+def test_open_other_review_flushes_and_switches_the_store(make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    w.hub.store.add_tag("packA/click.wav", "first")
+    w.hub.notify_changed("packA/click.wav")
+    other_review, other_root = _other_review(tmp_path)
     w.dialogs.open_target = other_review
     w.actions["open"].trigger()
     assert LibraryAnnotations(tmp_root).has_tag("packA/click.wav", "first")
-    assert w.annotations.path == other_root / SIDECAR_NAME
-    assert not w.annotations.has_tag("packA/click.wav", "first")
+    assert w.hub.store.path == other_root / SIDECAR_NAME
+    assert not w.hub.store.has_tag("packA/click.wav", "first")
+
+
+def test_malformed_sidecar_is_reported_once_and_the_store_is_read_only(make_win, tmp_root):
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    w = make_win(tmp_root)
+    assert sum(1 for c in w.dialogs.calls if c[0] == "error" and "version" in c[1]) == 1
+    assert w.hub.store.read_only
+    assert w.annotations_warning.isVisible()
+    assert "rescan" in w.annotations_warning.text()
+
+
+def test_rescan_reloads_a_fixed_sidecar_and_clears_the_warning(make_win, tmp_root):
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    w = make_win(tmp_root)
+    good = {"version": 1, "tags": [], "files": {"packA/click.wav": {"tags": ["fixed"]}}}
+    (tmp_root / SIDECAR_NAME).write_text(json.dumps(good), encoding="utf-8")
+    w.actions["rescan"].trigger()
+    assert not w.hub.store.read_only
+    assert not w.annotations_warning.isVisible()
+    assert w.hub.store.has_tag("packA/click.wav", "fixed")
+    assert "reloaded" in w.statusBar().currentMessage()
+
+
+def test_rescan_keeps_a_dirty_store_and_says_so(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.hub.store.add_tag("packA/click.wav", "mine")
+    w.hub.notify_changed("packA/click.wav")
+    w.actions["rescan"].trigger()  # fires before the 500 ms autosave, so the store is still dirty
+    assert w.hub.store.has_tag("packA/click.wav", "mine")
+    assert "not reloaded" in w.statusBar().currentMessage()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 3: Run tests to verify they fail**
 
-Run: `.venv/Scripts/python -m pytest tests/test_ui_smoke.py -q -k "store or sidecar or rescan_ or open_other"`
-Expected: FAIL with `AttributeError: 'MainWindow' object has no attribute 'annotations'`.
+Run: `.venv/Scripts/python -m pytest tests/test_ui_smoke.py -q`
+Expected: the new tests FAIL with `AttributeError: 'MainWindow' object has no attribute 'hub'`; the rewritten quit test FAILS because `quit_without_saving` no longer exists on the fake.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 4: Replace `quit_without_saving` in `dialogs.py`**
 
-In `audio_picker/ui/main_window.py`:
-
-Add imports:
+In `audio_picker/ui/dialogs.py` replace the `quit_without_saving` method of `Dialogs` with:
 
 ```python
-from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QVBoxLayout, QWidget
-
-from ..annotations import AnnotationsError, LibraryAnnotations
+    def unsaved(self, parent: QWidget | None, action: str, files: list[str]) -> str:
+        """Files could not be saved. Returns "retry", "discard" or "cancel"."""
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Unsaved changes")
+        box.setText(f"{' and '.join(files)} could not be saved.")
+        box.setInformativeText(f"Try again, or discard the unsaved changes and {action}.")
+        retry = box.addButton("Try again", QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton(f"Discard and {action}", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is retry:
+            return "retry"
+        if clicked is discard:
+            return "discard"
+        return "cancel"
 ```
 
-(Merge with the existing `QtWidgets` import line; `QLabel` is new.)
+- [ ] **Step 5: Implement in `main_window.py`**
+
+Imports: add `QLabel` to the `QtWidgets` import, and
+
+```python
+from ..annotations import LibraryAnnotations
+from .annotation_hub import AnnotationHub
+from .theme import error_css
+```
 
 In `__init__`, right after `self.library = AudioLibrary(self.root)`:
 
 ```python
-        self.annotations = LibraryAnnotations(self.root)
+        self.hub = AnnotationHub(LibraryAnnotations(self.root), self)
+        self.hub.save_failed.connect(lambda message: self.dialogs.error(self, "Save failed", message))
+        self.hub.reloaded.connect(self._on_annotations_reloaded)
 ```
 
-After the review save timer block, add:
-
-```python
-        self._annotations_timer = QTimer(self)
-        self._annotations_timer.setSingleShot(True)
-        self._annotations_timer.setInterval(AUTOSAVE_MS)
-        self._annotations_timer.timeout.connect(self._save_annotations)
-```
-
-After `self._run_check()` near the end of `__init__`, add:
-
-```python
-        self._report_annotations_load()
-```
+After `self._run_check()` near the end of `__init__`: `self._report_annotations_load()`.
 
 In `_build_widgets`, replace `self.statusBar()` with:
 
@@ -1810,65 +2113,57 @@ In `_build_widgets`, replace `self.statusBar()` with:
         self.statusBar().addPermanentWidget(self.annotations_warning)
 ```
 
-and add `from .theme import error_css` to the imports.
-
-Add a new section after `# -- mutations` methods (after `flush`):
+Replace `flush` with:
 
 ```python
-    # -- library annotations ---------------------------------------------------------
+    def flush(self) -> bool:
+        """Cancel the timers and save both files now if dirty. False if either is still unsaved."""
+        self._save_timer.stop()
+        review_ok = self._save() if self._dirty else True
+        notes_ok = self.hub.flush()
+        return review_ok and notes_ok
+```
 
-    def annotation_changed(self, _rel: str = "") -> None:
-        """An editor wrote to the store; debounce the sidecar save."""
-        self._annotations_timer.start()
+Add a new section after `flush`:
 
-    def _save_annotations(self) -> bool:
-        if not self.annotations.dirty or self.annotations.read_only:
-            return False
-        try:
-            self.annotations.save()
-        except OSError as e:
-            self._annotations_timer.stop()
-            self.dialogs.error(self, "Save failed", f"Could not write library notes to {self.annotations.path}:\n{e}")
-            return False
+```python
+    # -- unsaved changes ------------------------------------------------------------------
+
+    def _unsaved_files(self) -> list[str]:
+        files = []
+        if self._dirty:
+            files.append(self.review_path.name)
+        if self.hub.store.dirty:
+            files.append(self.hub.store.path.name)
+        return files
+
+    def settle_unsaved(self, action: str) -> bool:
+        """Flush both files; on failure ask try again / discard / cancel. True means go ahead."""
+        while not self.flush():
+            answer = self.dialogs.unsaved(self, action, self._unsaved_files())
+            if answer == "discard":
+                return True
+            if answer != "retry":
+                return False
         return True
 
-    def flush_annotations(self) -> None:
-        self._annotations_timer.stop()
-        self._save_annotations()
+    # -- library annotations ----------------------------------------------------------------
 
     def _report_annotations_load(self) -> None:
-        """Show a malformed-sidecar error once and keep a permanent warning while read-only."""
-        if self.annotations.load_error:
-            self.dialogs.error(self, "Library notes not loaded", self.annotations.load_error)
+        """Show a malformed-sidecar error and keep a permanent warning while the store is read-only."""
+        store = self.hub.store
+        if store.load_error:
+            self.dialogs.error(self, "Library notes not loaded", store.load_error)
         self.annotations_warning.setText(
-            f"Library notes not saved: fix {self.annotations.path.name} and rescan" if self.annotations.read_only else ""
+            f"Library notes not loaded: fix {store.path.name} and rescan" if store.read_only else ""
         )
-        self.annotations_warning.setVisible(self.annotations.read_only)
+        self.annotations_warning.setVisible(store.read_only)
 
-    def _reload_annotations(self) -> str:
-        """Called from rescan. Returns a status fragment."""
-        if self.annotations.dirty:
-            return "library notes not reloaded (unsaved edits)"
-        try:
-            self.annotations.reload()
-        except AnnotationsError:
-            pass
+    def _on_annotations_reloaded(self) -> None:
         self._report_annotations_load()
-        return "library notes reloaded" if not self.annotations.read_only else "library notes not loaded"
 ```
 
-Change `flush` to also flush annotations:
-
-```python
-    def flush(self) -> None:
-        """Cancel the timers and save immediately if dirty."""
-        self._save_timer.stop()
-        if self._dirty:
-            self._save()
-        self.flush_annotations()
-```
-
-Change `_rescan` to:
+Replace `_rescan`:
 
 ```python
     def _rescan(self) -> None:
@@ -1876,37 +2171,50 @@ Change `_rescan` to:
         self._run_check()
         self.tree.set_missing(self._missing_slots)
         self.panel.set_missing(self._missing_cids)
-        notes = self._reload_annotations()
+        notes = self.hub.reload()
         self._status(f"Library rescanned: {len(self.library)} audio files; {notes}. " + self.statusBar().currentMessage())
 ```
 
-In `_open_other`, after `self.library = AudioLibrary(root)`, add:
+In `_open_other`, replace the first line `self.flush()` with:
 
 ```python
-        self.annotations = LibraryAnnotations(root)
-        self._report_annotations_load()
+        if not self.settle_unsaved("open another review"):
+            return
 ```
 
-(`flush()` at the top of `_open_other` already saved the old store.)
+and after `self.library = AudioLibrary(root)` add `self.hub.set_store(LibraryAnnotations(root))`.
 
-- [ ] **Step 4: Run the tests**
+Replace `closeEvent`:
 
-Run: `.venv/Scripts/python -m pytest tests/test_ui_smoke.py -q`
-Expected: all PASS. Note `test_rescan_keeps_a_dirty_store_and_says_so` asserts on "not reloaded", which the status fragment contains.
+```python
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if not self.settle_unsaved("quit"):
+            event.ignore()
+            return
+        self.player.stop()
+        self.settings.setValue("window/geometry", self.saveGeometry())
+        event.accept()
+```
 
-- [ ] **Step 5: Lint and commit**
+`_on_current_slot` and `_export` keep calling `flush()` and ignoring its result, as they do today: a failed save there already shows its own error and the change stays in memory.
+
+- [ ] **Step 6: Run the whole suite**
+
+Run: `.venv/Scripts/python -m pytest -q`
+Expected: all PASS. `test_unsaved_dialog_names_both_files` depends on the review save failing through the conflict dialog with the fake's default `conflict_answer = "cancel"`, which returns False from `_save`.
+
+- [ ] **Step 7: Lint and commit**
 
 ```bash
 .venv/Scripts/ruff check audio_picker tests && .venv/Scripts/ruff format audio_picker tests
-git add audio_picker/ui/main_window.py tests/test_ui_smoke.py
-git commit -m "Review window owns the annotations store and its save timer
+git add audio_picker/ui/main_window.py audio_picker/ui/dialogs.py tests/test_ui_smoke.py
+git commit -m "Review window owns the annotation hub; unsaved changes block quit and open
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
-
-### Task 9: "Library notes" dock in the review window
+### Task 10: "Library notes" dock in the review window
 
 **Files:**
 - Modify: `audio_picker/ui/main_window.py`
@@ -1939,12 +2247,21 @@ def test_dock_follows_the_active_candidate(qtbot, win):
     assert win.notes_editor.path is None
 
 
-def test_dock_edit_writes_to_the_store_and_starts_the_save_timer(qtbot, make_win, tmp_root):
+def test_dock_edit_goes_through_the_hub_and_autosaves(qtbot, make_win, tmp_root):
     w = make_win(tmp_root)
     w.notes_dock.show()
-    w.notes_editor.stars[4].click()
-    assert w.annotations.get("packA/click.wav").rating == 5
+    with qtbot.waitSignal(w.hub.changed):
+        w.notes_editor.stars[4].click()
+    assert w.hub.store.get("packA/click.wav").rating == 5
     qtbot.waitUntil(lambda: (tmp_root / SIDECAR_NAME).exists(), timeout=3000)
+
+
+def test_dock_reflects_a_change_made_elsewhere(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    w.hub.store.set_rating("packA/click.wav", 3)
+    w.hub.notify_changed("packA/click.wav")
+    assert [s.text() for s in w.notes_editor.stars] == ["★", "★", "★", "☆", "☆"]
 
 
 def test_typing_y_in_the_dock_note_does_not_mark_a_decision(qtbot, win):
@@ -1953,7 +2270,7 @@ def test_typing_y_in_the_dock_note_does_not_mark_a_decision(qtbot, win):
     qtbot.keyClicks(win.notes_editor.note, "yn1")
     assert win.review.slot("ui_click").candidate("A002").decision == "unreviewed"
     assert not any(c[0] == "play" for c in win.player.calls)
-    assert win.annotations.get("packA/click.wav").note == "yn1"
+    assert win.hub.store.get("packA/click.wav").note == "yn1"
 
 
 def test_escape_in_the_dock_clears_the_tag_field_and_returns_to_the_tree(qtbot, win):
@@ -1980,21 +2297,29 @@ def test_dock_state_is_saved_and_restored(qtbot, tmp_path, review_file):
     assert w2.notes_dock.isVisible()
 
 
+def test_dock_is_disabled_while_the_sidecar_is_malformed_and_recovers_on_rescan(make_win, tmp_root):
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    assert w.notes_editor.path == "packA/click.wav"
+    assert not w.notes_editor.note.isEnabled()
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 1, "tags": [], "files": {}}', encoding="utf-8")
+    w.actions["rescan"].trigger()
+    assert w.notes_editor.path == "packA/click.wav"
+    assert w.notes_editor.note.isEnabled()
+    assert not w.annotations_warning.isVisible()
+
+
 def test_open_other_review_repoints_the_dock(make_win, tmp_root, tmp_path):
     w = make_win(tmp_root)
     w.notes_dock.show()
-    other_root = tmp_path / "other_audio"
-    shutil.copytree(FIXTURE_ROOT, other_root)
-    other_review = tmp_path / "other" / "review.json"
-    other_review.parent.mkdir()
-    data = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-    data["root"] = "../other_audio"
-    other_review.write_text(json.dumps(data), encoding="utf-8")
+    other_review, other_root = _other_review(tmp_path)
     w.dialogs.open_target = other_review
     w.actions["open"].trigger()
+    assert w.notes_editor.path == "packA/click.wav"
     w.notes_editor.stars[0].click()
-    assert LibraryAnnotations(other_root).get("packA/click.wav").rating is None  # not yet flushed
-    assert w.annotations.get("packA/click.wav").rating == 1
+    assert w.hub.store.path == other_root / SIDECAR_NAME
+    assert w.hub.store.get("packA/click.wav").rating == 1
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2008,11 +2333,11 @@ In `audio_picker/ui/main_window.py`:
 
 Imports: add `QDockWidget` to the `QtWidgets` import and `from .annotation_editor import AnnotationEditor`.
 
-In `_build_widgets`, after the status bar block, add:
+In `_build_widgets`, after the status bar block:
 
 ```python
-        self.notes_editor = AnnotationEditor(self.annotations)
-        self.notes_editor.changed.connect(self.annotation_changed)
+        self.notes_editor = AnnotationEditor(self.hub.store)
+        self.notes_editor.changed.connect(self.hub.notify_changed)
         self.notes_editor.escape_pressed.connect(self.tree.view.setFocus)  # only fires when the dock floats
         self.notes_dock = QDockWidget("Library notes", self)
         self.notes_dock.setObjectName("libraryNotesDock")
@@ -2022,10 +2347,11 @@ In `_build_widgets`, after the status bar block, add:
         self.notes_dock.hide()
 ```
 
-and to the signal connections at the end of `_build_widgets`:
+At the end of `_build_widgets`, with the other signal connections:
 
 ```python
         self.panel.active_changed.connect(self._on_active_changed)
+        self.hub.changed.connect(self._on_annotation_changed)
 ```
 
 In `_build_menus`, between the Candidate menu and the Help menu:
@@ -2035,24 +2361,15 @@ In `_build_menus`, between the Candidate menu and the Help menu:
         view_menu.addAction(self.notes_dock.toggleViewAction())
 ```
 
-In `__init__`, replace the geometry block with:
+In `__init__`, after the geometry block:
 
 ```python
-        geometry = self.settings.value("window/geometry")
-        if geometry is not None:
-            self.restoreGeometry(geometry)
-        else:
-            self.resize(1200, 760)
         state = self.settings.value("window/state")
         if state is not None:
             self.restoreState(state)
 ```
 
-In `closeEvent`, after the geometry line:
-
-```python
-        self.settings.setValue("window/state", self.saveState())
-```
+In `closeEvent`, after the geometry line: `self.settings.setValue("window/state", self.saveState())`.
 
 Add near `_on_current_slot`:
 
@@ -2071,34 +2388,27 @@ Change `_escape` to:
         self.tree.view.setFocus()
 ```
 
-In `_report_annotations_load`, add as the first line so the dock always edits the current store:
+In the library annotations section:
 
 ```python
-        self.notes_editor.set_store(self.annotations)
-```
+    def _on_annotation_changed(self, rel: str) -> None:
+        if self.notes_editor.path == rel:
+            self.notes_editor.refresh()
 
-Then, because `set_store` clears the path, re-sync it at the end of `_open_other` by calling `self._on_active_changed(self.panel.active_candidate_id())` after `self._rebuild_all()`. Also replace `_reload_annotations` (from Task 8) with this version, which re-syncs the dock after a rescan:
-
-```python
-    def _reload_annotations(self) -> str:
-        """Called from rescan. Returns a status fragment."""
-        if self.annotations.dirty:
-            return "library notes not reloaded (unsaved edits)"
-        try:
-            self.annotations.reload()
-        except AnnotationsError:
-            pass
+    def _on_annotations_reloaded(self) -> None:
         self._report_annotations_load()
+        self.notes_editor.set_store(self.hub.store)
         self._on_active_changed(self.panel.active_candidate_id())
-        return "library notes reloaded" if not self.annotations.read_only else "library notes not loaded"
 ```
 
-Note on ordering: `_build_widgets` constructs the editor from `self.annotations`, so the store must be created before `_build_widgets()` in `__init__`; it is (Task 8 placed it right after the library).
+(This replaces the one-line `_on_annotations_reloaded` from Task 9.)
+
+Construction order: `_build_widgets` reads `self.hub`, which Task 9 created before `_build_widgets()` runs; `restoreState` runs after `_build_widgets`, so the dock exists when the state is applied.
 
 - [ ] **Step 4: Run the whole suite**
 
 Run: `.venv/Scripts/python -m pytest -q`
-Expected: all PASS. If `test_dock_state_is_saved_and_restored` fails because `restoreState` runs before the dock exists, confirm `_build_widgets()` runs before the geometry block (it does in the current `__init__`).
+Expected: all PASS.
 
 - [ ] **Step 5: Lint and commit**
 
@@ -2112,7 +2422,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 10: Editor in the Add Candidate dialog
+### Task 11: Editor in the Add Candidate dialog
 
 **Files:**
 - Modify: `audio_picker/ui/dialogs.py`
@@ -2137,6 +2447,7 @@ from PySide6.QtCore import Qt
 from audio_picker.annotations import LibraryAnnotations
 from audio_picker.library import AudioLibrary
 from audio_picker.model import load
+from audio_picker.ui.annotation_hub import AnnotationHub
 from audio_picker.ui.dialogs import AddCandidateDialog
 from tests.test_ui_smoke import FakePlayer
 
@@ -2155,7 +2466,7 @@ def root(tmp_path: Path) -> Path:
 def dialog(qtbot, root):
     store = LibraryAnnotations(root)
     store.add_tag("packB/hit.mp3", "hit")
-    d = AddCandidateDialog(load(EXAMPLE), AudioLibrary(root), root, FakePlayer(), store)
+    d = AddCandidateDialog(load(EXAMPLE), AudioLibrary(root), root, FakePlayer(), AnnotationHub(store))
     qtbot.addWidget(d)
     d.show()
     qtbot.waitExposed(d)
@@ -2168,6 +2479,7 @@ def test_editor_follows_the_highlighted_result(dialog):
     assert dialog.editor.path == "packB/hit.mp3"
     assert dialog.editor.chip_tags() == ["hit"]
     assert dialog.width() >= 900
+    assert "even if you cancel" in dialog.notes_hint.text()
 
 
 def test_hash_search_uses_the_store(dialog):
@@ -2175,10 +2487,23 @@ def test_hash_search_uses_the_store(dialog):
     assert [dialog.results.item(i).text() for i in range(dialog.results.count())] == ["packB/hit.mp3"]
 
 
-def test_edit_in_dialog_writes_to_the_shared_store(qtbot, dialog):
+def test_edit_notifies_the_hub_and_autosaves_while_open(qtbot, dialog, root):
     dialog.results.setCurrentRow(1)  # packA/click.wav
-    dialog.editor.stars[1].click()
-    assert dialog.annotations.get("packA/click.wav").rating == 2
+    with qtbot.waitSignal(dialog.hub.changed) as blocker:
+        dialog.editor.stars[1].click()
+    assert blocker.args == ["packA/click.wav"]
+    qtbot.waitUntil(lambda: LibraryAnnotations(root).get("packA/click.wav").rating == 2, timeout=3000)
+    assert dialog.isVisible()
+
+
+def test_enter_in_the_tag_field_adds_a_tag_and_does_not_accept_the_dialog(qtbot, dialog):
+    dialog.results.setCurrentRow(1)
+    dialog.editor.tag_input.setFocus()
+    qtbot.keyClicks(dialog.editor.tag_input, "dry")
+    qtbot.keyClick(dialog.editor.tag_input, Qt.Key.Key_Return)
+    assert dialog.hub.store.has_tag("packA/click.wav", "dry")
+    assert dialog.isVisible()
+    assert dialog.result() != dialog.DialogCode.Accepted
 
 
 def test_escape_in_the_tag_field_does_not_close_the_dialog(qtbot, dialog):
@@ -2194,7 +2519,7 @@ def test_escape_in_the_tag_field_does_not_close_the_dialog(qtbot, dialog):
 Update `tests/test_ui_smoke.py`: change the fake's method to
 
 ```python
-    def add_candidate(self, parent, review, library, root, player, annotations):
+    def add_candidate(self, parent, review, library, root, player, hub):
         self.calls.append(("add_candidate",))
         return None
 ```
@@ -2202,38 +2527,43 @@ Update `tests/test_ui_smoke.py`: change the fake's method to
 and add this test at the end of the dock section:
 
 ```python
-def test_add_candidate_dialog_gets_the_store_and_edits_are_saved_after(qtbot, make_win, tmp_root):
+def test_add_candidate_edits_autosave_while_open_even_when_cancelled(qtbot, make_win, tmp_root):
     w = make_win(tmp_root)
 
-    def fake_add(parent, review, library, root, player, annotations):
-        annotations.add_tag("packA/confirm.ogg", "warm")
-        return None
+    def fake_add(parent, review, library, root, player, hub):
+        hub.store.add_tag("packA/confirm.ogg", "warm")
+        hub.notify_changed("packA/confirm.ogg")
+        qtbot.waitUntil(lambda: LibraryAnnotations(tmp_root).has_tag("packA/confirm.ogg", "warm"), timeout=3000)
+        return None  # cancelled
 
     w.dialogs.add_candidate = fake_add
     w.actions["add_candidate"].trigger()
-    qtbot.waitUntil(lambda: LibraryAnnotations(tmp_root).has_tag("packA/confirm.ogg", "warm"), timeout=3000)
+    assert [c.id for c in w.review.slot("ui_click").candidates] == ["A001", "A002"]
+    assert w.hub.store.has_tag("packA/confirm.ogg", "warm")
 ```
 
 Update `tests/test_screenshots.py` in `test_dialog_screenshots`: the dialog constructor becomes
 
 ```python
-    add = AddCandidateDialog(review, AudioLibrary(FIXTURE_ROOT), FIXTURE_ROOT, FakePlayer(), LibraryAnnotations(FIXTURE_ROOT))
+    add = AddCandidateDialog(
+        review, AudioLibrary(FIXTURE_ROOT), FIXTURE_ROOT, FakePlayer(), AnnotationHub(LibraryAnnotations(FIXTURE_ROOT))
+    )
 ```
 
-with `from audio_picker.annotations import LibraryAnnotations` added to the imports. (No sidecar exists in the fixture root, and screenshots never edit, so nothing is written there.)
+with `from audio_picker.annotations import LibraryAnnotations` and `from audio_picker.ui.annotation_hub import AnnotationHub` added to the imports. No sidecar exists in the fixture root and screenshots never edit, so nothing is written there.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/Scripts/python -m pytest tests/test_add_candidate_dialog.py -q`
-Expected: FAIL with `TypeError: AddCandidateDialog.__init__() takes from 5 to 6 positional arguments but 6 were given` or similar.
+Expected: FAIL with a `TypeError` about the number of positional arguments.
 
 - [ ] **Step 3: Implement**
 
 In `audio_picker/ui/dialogs.py`:
 
-Add imports: `from ..annotations import LibraryAnnotations`, `from .annotation_editor import AnnotationEditor`, and `QEvent` to the `QtCore` import.
+Add imports: `from .annotation_editor import AnnotationEditor`, `from .annotation_hub import AnnotationHub`, and `dim_css` to the `.theme` import.
 
-Replace the `AddCandidateDialog.__init__` signature and layout so the dialog is a horizontal split with the buttons under both columns:
+Replace `AddCandidateDialog.__init__` so the dialog is a horizontal split with the buttons under both columns:
 
 ```python
 class AddCandidateDialog(QDialog):
@@ -2243,7 +2573,7 @@ class AddCandidateDialog(QDialog):
         library: AudioLibrary,
         root: Path,
         player,
-        annotations: LibraryAnnotations,
+        hub: AnnotationHub,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -2253,7 +2583,7 @@ class AddCandidateDialog(QDialog):
         self._library = library
         self._root = root
         self._player = player
-        self.annotations = annotations
+        self.hub = hub
         self._chosen: str | None = None
 
         outer = QVBoxLayout(self)
@@ -2298,10 +2628,20 @@ class AddCandidateDialog(QDialog):
         form.addRow("Why", self.why)
         layout.addLayout(form)
 
-        self.editor = AnnotationEditor(annotations)
-        self.editor.setFixedWidth(280)
+        right = QWidget()
+        right.setFixedWidth(280)
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        self.editor = AnnotationEditor(hub.store)
+        self.editor.changed.connect(hub.notify_changed)
         self.editor.escape_pressed.connect(self.search.setFocus)
-        columns.addWidget(self.editor)
+        self.notes_hint = QLabel("Notes are saved to the library even if you cancel.")
+        self.notes_hint.setWordWrap(True)
+        self.notes_hint.setStyleSheet(dim_css())
+        self.notes_hint.setContentsMargins(8, 0, 8, 4)
+        right_layout.addWidget(self.editor, 1)
+        right_layout.addWidget(self.notes_hint)
+        columns.addWidget(right)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
@@ -2313,7 +2653,7 @@ class AddCandidateDialog(QDialog):
         self.search.setFocus()
 ```
 
-Change `_refresh_results` to pass the store: `for rel in self._library.search(query, annotations=self.annotations):`.
+Change `_refresh_results` to `for rel in self._library.search(query, annotations=self.hub.store):`.
 
 Change `_set_chosen` to also drive the editor:
 
@@ -2330,9 +2670,9 @@ Change `Dialogs.add_candidate`:
 
 ```python
     def add_candidate(
-        self, parent, review: Review, library: AudioLibrary, root: Path, player, annotations: LibraryAnnotations
+        self, parent, review: Review, library: AudioLibrary, root: Path, player, hub: AnnotationHub
     ) -> AddCandidateResult | None:
-        dialog = AddCandidateDialog(review, library, root, player, annotations, parent)
+        dialog = AddCandidateDialog(review, library, root, player, hub, parent)
         try:
             accepted = dialog.exec() == QDialog.DialogCode.Accepted
             return dialog.result_value() if accepted else None
@@ -2340,20 +2680,15 @@ Change `Dialogs.add_candidate`:
             player.stop()  # a preview never outlives the dialog
 ```
 
-Enter in the tag field is consumed by the editor's event filter (Task 6), so the dialog's default OK button never fires from it; the `why` and `search` fields keep their existing Enter behaviour.
+Enter in the tag field is consumed by the editor's event filter (Task 6), so the dialog's default OK button never fires from it; the `why` and `search` fields keep their existing Enter behaviour. The hub's timer runs during `exec()` because the dialog's modal loop still processes events, so edits save while the dialog is open.
 
-In `audio_picker/ui/main_window.py` `_add_candidate`, replace the dialog call and the lines after it:
+In `audio_picker/ui/main_window.py` `_add_candidate`, change the dialog call to:
 
 ```python
-        self.player.stop()
-        result = self.dialogs.add_candidate(self, self.review, self.library, self.root, self.player, self.annotations)
-        self.player.stop()
-        if self.annotations.dirty:
-            self.annotation_changed()
-        self.notes_editor.refresh()
-        if result is None:
-            return
+        result = self.dialogs.add_candidate(self, self.review, self.library, self.root, self.player, self.hub)
 ```
+
+Nothing else changes there: the dock already refreshes through `hub.changed`.
 
 - [ ] **Step 4: Run the suite**
 
@@ -2365,14 +2700,13 @@ Expected: all PASS.
 ```bash
 .venv/Scripts/ruff check audio_picker tests && .venv/Scripts/ruff format audio_picker tests
 git add audio_picker/ui/dialogs.py audio_picker/ui/main_window.py tests/test_add_candidate_dialog.py tests/test_ui_smoke.py tests/test_screenshots.py
-git commit -m "Add Candidate dialog hosts the annotation editor
+git commit -m "Add Candidate dialog hosts the annotation editor and saves as you go
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
-
-### Task 11: `LibraryWindow` standalone viewer
+### Task 12: `LibraryWindow` standalone viewer
 
 **Files:**
 - Create: `audio_picker/ui/library_window.py`
@@ -2385,6 +2719,7 @@ Create `tests/test_library_window.py`:
 ```python
 """Standalone library viewer (spec section 5.3)."""
 
+import json
 import shutil
 from pathlib import Path
 
@@ -2395,11 +2730,13 @@ from PySide6.QtWidgets import QApplication
 from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
 from audio_picker.library import AudioLibrary
 from audio_picker.player import PlayerState
+from audio_picker.ui.annotation_hub import AnnotationHub
 from audio_picker.ui.library_window import LibraryWindow
 from audio_picker.ui.path_delegate import SUMMARY_ROLE
 from tests.test_ui_smoke import FakeDialogs, FakePlayer
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "audio"
+ALL_FILES = ["loose/miss.wav", "packA/click.wav", "packA/confirm.ogg", "packB/hit.mp3"]
 
 
 @pytest.fixture
@@ -2418,16 +2755,16 @@ def root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def make_lw(qtbot, tmp_path, root):
-    def _make(*, owns_store: bool = True, player=None, annotations=None) -> LibraryWindow:
+    def _make(*, owns_hub: bool = True, player=None, hub=None) -> LibraryWindow:
         settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
         w = LibraryWindow(
             root,
             AudioLibrary(root),
-            annotations or LibraryAnnotations(root),
+            hub or AnnotationHub(LibraryAnnotations(root)),
             player or FakePlayer(),
             settings,
-            owns_store=owns_store,
-            owns_player=owns_store,
+            owns_hub=owns_hub,
+            owns_player=owns_hub,
             dialogs=FakeDialogs(),
         )
         qtbot.addWidget(w)
@@ -2449,12 +2786,19 @@ def rows(w: LibraryWindow) -> list[str]:
     return [w.list.item(i).text() for i in range(w.list.count())]
 
 
+def tag_choices(w: LibraryWindow) -> list[str]:
+    return [w.tag_filter.itemText(i) for i in range(w.tag_filter.count())]
+
+
 def press(qtbot, w, key, modifier=Qt.KeyboardModifier.NoModifier) -> None:
     qtbot.keyClick(QApplication.focusWidget() or w, key, modifier)
 
 
+# -- listing and filters ---------------------------------------------------------------
+
+
 def test_lists_every_file_then_orphans_greyed(lw):
-    assert rows(lw) == ["loose/miss.wav", "packA/click.wav", "packA/confirm.ogg", "packB/hit.mp3", "packZ/gone.wav"]
+    assert rows(lw) == ALL_FILES + ["packZ/gone.wav"]
     orphan = lw.list.item(4)
     assert "Missing on disk" in orphan.toolTip()
     assert lw.is_orphan(orphan)
@@ -2473,7 +2817,7 @@ def test_search_hides_orphans_and_hash_terms_work(lw):
 
 
 def test_tag_and_rating_filters_combine(lw):
-    assert [lw.tag_filter.itemText(i) for i in range(lw.tag_filter.count())] == ["Any tag", "hit", "orphan", "ui"]
+    assert tag_choices(lw) == ["Any tag", "hit", "orphan", "ui"]
     lw.tag_filter.setCurrentText("hit")
     assert rows(lw) == ["packB/hit.mp3"]
     lw.tag_filter.setCurrentText("Any tag")
@@ -2484,6 +2828,9 @@ def test_tag_and_rating_filters_combine(lw):
     assert rows(lw) == ["packA/click.wav"]
 
 
+# -- editing and synchronisation ----------------------------------------------------------
+
+
 def test_current_row_drives_the_editor_and_edits_update_the_row(qtbot, lw):
     lw.list.setCurrentRow(2)  # packA/confirm.ogg
     assert lw.editor.path == "packA/confirm.ogg"
@@ -2492,19 +2839,64 @@ def test_current_row_drives_the_editor_and_edits_update_the_row(qtbot, lw):
     qtbot.keyClicks(lw.editor.tag_input, "warm")
     qtbot.keyClick(lw.editor.tag_input, Qt.Key.Key_Return)
     assert lw.list.item(2).data(SUMMARY_ROLE) == "★3 warm"
-    assert [lw.tag_filter.itemText(i) for i in range(lw.tag_filter.count())] == [
-        "Any tag",
-        "hit",
-        "orphan",
-        "ui",
-        "warm",
-    ]
+    assert tag_choices(lw) == ["Any tag", "hit", "orphan", "ui", "warm"]
+    assert lw.editor.path == "packA/confirm.ogg", "repainting a row keeps the current one"
+
+
+def test_removing_the_filtered_tag_drops_the_row(lw):
+    lw.tag_filter.setCurrentText("ui")
+    assert rows(lw) == ["packA/click.wav"]
+    assert lw.editor.path == "packA/click.wav"
+    lw.editor.chips[0].remove.click()
+    assert rows(lw) == []
+    assert lw.editor.path is None
+
+
+def test_lowering_the_rating_below_the_threshold_drops_the_row(lw):
+    lw.rating_filter.setCurrentText("3+")
+    assert rows(lw) == ["packA/click.wav"]
+    lw.editor.stars[1].click()  # rating 2
+    assert rows(lw) == []
+
+
+def test_clearing_an_orphan_removes_it(lw):
+    lw.list.setCurrentRow(4)
+    lw.editor.chips[0].remove.click()
+    assert rows(lw) == ALL_FILES
+
+
+def test_change_from_another_host_updates_row_and_editor(lw):
+    lw.list.setCurrentRow(2)
+    lw.hub.store.set_rating("packA/confirm.ogg", 5)
+    lw.hub.notify_changed("packA/confirm.ogg")
+    assert lw.list.item(2).data(SUMMARY_ROLE) == "★5"
+    assert [s.text() for s in lw.editor.stars] == ["★"] * 5
+
+
+def test_reloaded_rebuilds_from_the_store_and_library(lw, root):
+    (root / "packA" / "new.wav").write_bytes(b"")
+    good = {"version": 1, "tags": [], "files": {"packA/new.wav": {"rating": 1}}}
+    (root / SIDECAR_NAME).write_text(json.dumps(good), encoding="utf-8")
+    lw.library.refresh()
+    lw.hub.reload()
+    assert "packA/new.wav" in rows(lw)
+    assert lw.list.item(rows(lw).index("packA/new.wav")).data(SUMMARY_ROLE) == "★1"
+    assert tag_choices(lw) == ["Any tag"]
+
+
+def test_rescan_action_refreshes_library_and_notes(lw, root):
+    (root / "packA" / "new.wav").write_bytes(b"")
+    lw.actions["rescan"].trigger()
+    assert "packA/new.wav" in rows(lw)
+    assert "reloaded" in lw.statusBar().currentMessage()
+
+
+# -- playback -------------------------------------------------------------------------------
 
 
 def test_double_click_and_space_play_pause_and_stop(qtbot, lw):
     lw.list.setCurrentRow(1)
-    item = lw.list.item(1)
-    lw.list.itemDoubleClicked.emit(item)
+    lw.list.itemDoubleClicked.emit(lw.list.item(1))
     assert lw.player.calls[-1] == ("play", lw.root / "packA" / "click.wav")
     assert "click.wav" in lw.transport.now_playing.text()
     lw.list.setFocus()
@@ -2529,7 +2921,7 @@ def test_space_in_a_text_field_types_instead_of_playing(qtbot, lw):
     lw.editor.note.setFocus()
     qtbot.keyClicks(lw.editor.note, "a b")
     assert not any(c[0] == "play" for c in lw.player.calls)
-    assert lw.annotations.get("packA/click.wav").note == "a b"
+    assert lw.hub.store.get("packA/click.wav").note == "a b"
 
 
 def test_escape_returns_focus_to_the_list(qtbot, lw):
@@ -2539,32 +2931,6 @@ def test_escape_returns_focus_to_the_list(qtbot, lw):
     qtbot.keyClick(lw.editor.tag_input, Qt.Key.Key_Escape)
     assert lw.editor.tag_input.text() == ""
     assert lw.list.hasFocus()
-
-
-def test_owned_store_autosaves_and_flushes_on_close(qtbot, lw, root):
-    lw.list.setCurrentRow(2)
-    lw.editor.stars[0].click()
-    qtbot.waitUntil(lambda: LibraryAnnotations(root).get("packA/confirm.ogg").rating == 1, timeout=3000)
-    lw.editor.note.setFocus()
-    qtbot.keyClicks(lw.editor.note, "bye")
-    assert lw.close()
-    assert LibraryAnnotations(root).get("packA/confirm.ogg").note == "bye"
-    assert lw.player.calls[-1] == ("stop",)
-
-
-def test_unowned_store_emits_changed_and_never_saves(qtbot, make_lw, root):
-    store = LibraryAnnotations(root)
-    w = make_lw(owns_store=False, annotations=store)
-    before = (root / SIDECAR_NAME).read_bytes()
-    w.list.setCurrentRow(2)
-    with qtbot.waitSignal(w.changed) as blocker:
-        w.editor.stars[0].click()
-    assert blocker.args == ["packA/confirm.ogg"]
-    qtbot.wait(700)
-    assert (root / SIDECAR_NAME).read_bytes() == before
-    assert w.close()
-    assert (root / SIDECAR_NAME).read_bytes() == before
-    assert not any(c == ("stop",) for c in w.player.calls)
 
 
 def test_play_requested_is_emitted_before_playing(qtbot, lw):
@@ -2580,33 +2946,66 @@ def test_someone_else_playing_clears_now_playing(lw):
     assert lw.transport.now_playing.text() == "Nothing playing"
 
 
-def test_refresh_path_updates_a_row_edited_elsewhere(lw):
-    lw.annotations.set_rating("packA/confirm.ogg", 5)
-    lw.refresh_path("packA/confirm.ogg")
-    assert lw.list.item(2).data(SUMMARY_ROLE) == "★5"
-
-
-def test_save_failure_reports_and_keeps_dirty(qtbot, lw, root):
-    lw.list.setCurrentRow(2)
-    (root / SIDECAR_NAME).unlink()
-    (root / SIDECAR_NAME).mkdir()
-    lw.editor.stars[0].click()
-    qtbot.waitUntil(lambda: any(c[0] == "error" for c in lw.dialogs.calls), timeout=3000)
-    assert lw.annotations.dirty
-    lw.dialogs.quit_answer = True
-    assert lw.close()
-
-
-def test_geometry_is_saved(lw):
-    lw.close()
-    assert lw.settings.value("library_window/geometry") is not None
-
-
 def test_stopped_state_from_the_player_clears_now_playing(lw):
     lw.list.setCurrentRow(1)
     lw.list.itemDoubleClicked.emit(lw.list.item(1))
     lw.player._set(PlayerState.STOPPED)
     assert lw.transport.now_playing.text() == "Nothing playing"
+
+
+# -- persistence and ownership ----------------------------------------------------------------
+
+
+def test_owned_hub_autosaves_and_flushes_on_close(qtbot, lw, root):
+    lw.list.setCurrentRow(2)
+    lw.editor.stars[0].click()
+    qtbot.waitUntil(lambda: LibraryAnnotations(root).get("packA/confirm.ogg").rating == 1, timeout=3000)
+    lw.editor.note.setFocus()
+    qtbot.keyClicks(lw.editor.note, "bye")
+    assert lw.close()
+    assert LibraryAnnotations(root).get("packA/confirm.ogg").note == "bye"
+    assert lw.player.calls[-1] == ("stop",)
+    assert lw.settings.value("library_window/geometry") is not None
+
+
+def test_owned_hub_save_failure_reports_then_close_asks(qtbot, lw, root):
+    lw.list.setCurrentRow(2)
+    (root / SIDECAR_NAME).unlink()
+    (root / SIDECAR_NAME).mkdir()
+    lw.editor.stars[0].click()
+    qtbot.waitUntil(lambda: any(c[0] == "error" for c in lw.dialogs.calls), timeout=3000)
+    assert lw.hub.store.dirty
+    lw.dialogs.unsaved_answer = "cancel"
+    assert not lw.close()
+    assert ("unsaved", "close", (SIDECAR_NAME,)) in lw.dialogs.calls
+    lw.dialogs.unsaved_answer = "discard"
+    assert lw.close()
+
+
+def test_unowned_hub_neither_reports_nor_stops_the_player(qtbot, make_lw, root):
+    hub = AnnotationHub(LibraryAnnotations(root))
+    w = make_lw(owns_hub=False, hub=hub)
+    (root / SIDECAR_NAME).unlink()
+    (root / SIDECAR_NAME).mkdir()
+    w.list.setCurrentRow(2)
+    with qtbot.waitSignal(hub.save_failed):
+        w.editor.stars[0].click()
+    assert not any(c[0] in ("error", "unsaved") for c in w.dialogs.calls)
+    assert w.close()
+    assert not any(c == ("stop",) for c in w.player.calls)
+
+
+def test_owned_hub_with_malformed_sidecar_reports_and_disables_editing(make_lw, root):
+    (root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    w = make_lw()
+    assert sum(1 for c in w.dialogs.calls if c[0] == "error" and "version" in c[1]) == 1
+    assert w.warning.isVisible() and "rescan" in w.warning.text().lower()
+    w.list.setCurrentRow(1)
+    assert not w.editor.note.isEnabled()
+    (root / SIDECAR_NAME).write_text('{"version": 1, "tags": [], "files": {}}', encoding="utf-8")
+    w.actions["rescan"].trigger()
+    assert w.editor.note.isEnabled()
+    assert not w.warning.isVisible()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2621,7 +3020,7 @@ Create `audio_picker/ui/library_window.py`:
 ```python
 """Standalone library viewer: search, filters, annotation editor, transport (spec section 5.3).
 
-Opened from the CLI (`audio-picker library --root DIR`, owning its store and
+Opened from the CLI (`audio-picker library --root DIR`, owning its hub and
 player) or from the review window (sharing both). Single keys follow the
 review window's rule: quiet while a text field has focus.
 """
@@ -2632,7 +3031,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -2652,13 +3051,13 @@ from ..library import AudioLibrary
 from ..paths import to_absolute
 from ..player import PlayerState
 from .annotation_editor import AnnotationEditor
+from .annotation_hub import AnnotationHub
 from .dialogs import Dialogs
 from .keys import text_field_focused
 from .path_delegate import PATH_ROLE, SUMMARY_ROLE, PathDelegate
 from .theme import dim_color, error_css
 from .transport_bar import TransportBar
 
-AUTOSAVE_MS = 500
 ORPHAN_ROLE = Qt.ItemDataRole.UserRole + 2
 ANY_TAG = "Any tag"
 RATING_CHOICES = [("Any rating", 0), ("1+", 1), ("2+", 2), ("3+", 3), ("4+", 4), ("5", 5)]
@@ -2671,18 +3070,17 @@ def summary_for(annotations: LibraryAnnotations, rel: str) -> str:
 
 
 class LibraryWindow(QMainWindow):
-    changed = Signal(str)  # an annotation was edited here (relative path)
     play_requested = Signal()  # emitted just before this window starts playback
 
     def __init__(
         self,
         root: Path,
         library: AudioLibrary,
-        annotations: LibraryAnnotations,
+        hub: AnnotationHub,
         player,
         settings: QSettings,
         *,
-        owns_store: bool,
+        owns_hub: bool,
         owns_player: bool = False,
         dialogs=None,
         parent=None,
@@ -2690,23 +3088,24 @@ class LibraryWindow(QMainWindow):
         super().__init__(parent)
         self.root = Path(root)
         self.library = library
-        self.annotations = annotations
+        self.hub = hub
         self.player = player
         self.settings = settings
-        self.owns_store = owns_store
+        self.owns_hub = owns_hub
         self.owns_player = owns_player
         self.dialogs = dialogs or Dialogs()
         self._playing_rel: str | None = None
         self._refreshing = False
-
-        self._save_timer = QTimer(self)
-        self._save_timer.setSingleShot(True)
-        self._save_timer.setInterval(AUTOSAVE_MS)
-        self._save_timer.timeout.connect(self._autosave)
+        self._listed: list[tuple[str, bool]] = []
 
         self._build_widgets()
         self._build_actions()
         self._connect_player()
+        self.hub.changed.connect(self._on_hub_changed)
+        self.hub.reloaded.connect(self._on_hub_reloaded)
+        if owns_hub:
+            self.hub.save_failed.connect(lambda message: self.dialogs.error(self, "Save failed", message))
+
         self.setWindowTitle(f"Library — {self.root.name} — Audio Picker")
         self.setMinimumSize(760, 480)
         geometry = self.settings.value("library_window/geometry")
@@ -2718,6 +3117,10 @@ class LibraryWindow(QMainWindow):
         self.refresh_list()
         self.list.setFocus()
 
+    @property
+    def annotations(self) -> LibraryAnnotations:
+        return self.hub.store
+
     # -- construction ----------------------------------------------------------------
 
     def _build_widgets(self) -> None:
@@ -2727,7 +3130,6 @@ class LibraryWindow(QMainWindow):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search paths, #tag for tags")
         self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(lambda _t: self.refresh_list())
         left_layout.addWidget(self.search)
 
         filters = QHBoxLayout()
@@ -2737,8 +3139,6 @@ class LibraryWindow(QMainWindow):
         self.rating_filter.setToolTip("Only files rated at least this")
         for text, value in RATING_CHOICES:
             self.rating_filter.addItem(text, value)
-        self.tag_filter.currentIndexChanged.connect(lambda _i: self.refresh_list())
-        self.rating_filter.currentIndexChanged.connect(lambda _i: self.refresh_list())
         filters.addWidget(self.tag_filter, 1)
         filters.addWidget(self.rating_filter)
         left_layout.addLayout(filters)
@@ -2751,9 +3151,9 @@ class LibraryWindow(QMainWindow):
         self.count_label = QLabel()
         left_layout.addWidget(self.count_label)
 
-        self.editor = AnnotationEditor(self.annotations)
+        self.editor = AnnotationEditor(self.hub.store)
         self.editor.setMinimumWidth(260)
-        self.editor.changed.connect(self._on_changed)
+        self.editor.changed.connect(self.hub.notify_changed)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(left)
@@ -2778,9 +3178,13 @@ class LibraryWindow(QMainWindow):
         self.warning.setStyleSheet(error_css())
         self.warning.hide()
         self.statusBar().addPermanentWidget(self.warning)
-        self._refresh_tag_filter()
 
-    def _action(self, text: str, shortcut: str, handler: Callable[[], None], *, single_key: bool) -> QAction:
+        self._refresh_tag_filter()
+        self.search.textChanged.connect(lambda _t: self.refresh_list())
+        self.tag_filter.currentIndexChanged.connect(lambda _i: self.refresh_list())
+        self.rating_filter.currentIndexChanged.connect(lambda _i: self.refresh_list())
+
+    def _action(self, key: str, text: str, shortcut: str, handler: Callable[[], None], *, single_key: bool) -> None:
         action = QAction(text, self)
         action.setShortcut(QKeySequence(shortcut))
         action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
@@ -2789,15 +3193,17 @@ class LibraryWindow(QMainWindow):
         else:
             action.triggered.connect(lambda: handler())
         self.addAction(action)
-        return action
+        self.actions[key] = action
 
     def _build_actions(self) -> None:
-        self._action("Play / pause", "Space", self._space, single_key=True)
-        self._action("Stop", "S", self.player.stop, single_key=True)
-        self._action("Toggle loop", "L", self.transport.loop.toggle, single_key=True)
-        self._action("Find", "Ctrl+F", self._focus_search, single_key=False)
-        self._action("Save now", "Ctrl+S", self.flush, single_key=False)
-        self._action("Close", "Ctrl+W", self.close, single_key=False)
+        self.actions: dict[str, QAction] = {}
+        self._action("space", "Play / pause", "Space", self._space, single_key=True)
+        self._action("stop", "Stop", "S", self.player.stop, single_key=True)
+        self._action("loop", "Toggle loop", "L", self.transport.loop.toggle, single_key=True)
+        self._action("search", "Find", "Ctrl+F", self._focus_search, single_key=False)
+        self._action("save", "Save now", "Ctrl+S", self.flush, single_key=False)
+        self._action("rescan", "Rescan library", "F5", self._rescan, single_key=False)
+        self._action("close", "Close", "Ctrl+W", self.close, single_key=False)
         escape = QShortcut(QKeySequence("Escape"), self)
         escape.setContext(Qt.ShortcutContext.WindowShortcut)
         escape.activated.connect(self._escape)
@@ -2807,34 +3213,43 @@ class LibraryWindow(QMainWindow):
         self.player.source_changed.connect(lambda _source: self._check_source())
         self.player.error.connect(lambda text: self.statusBar().showMessage(f"Playback error: {text}"))
 
-    # -- list -------------------------------------------------------------------------
+    # -- rows --------------------------------------------------------------------------------
 
     def _filters_active(self) -> bool:
-        return bool(self.search.text().strip()) or self.tag_filter.currentIndex() > 0 or self.rating_filter.currentData() > 0
+        return (
+            bool(self.search.text().strip())
+            or self.tag_filter.currentIndex() > 0
+            or int(self.rating_filter.currentData() or 0) > 0
+        )
+
+    def _rows(self) -> list[tuple[str, bool]]:
+        """(relative path, is_orphan) for everything the current search and filters admit."""
+        store = self.hub.store
+        hits = self.library.search(self.search.text(), limit=max(1, len(self.library)), annotations=store)
+        tag = self.tag_filter.currentText() if self.tag_filter.currentIndex() > 0 else None
+        min_rating = int(self.rating_filter.currentData() or 0)
+        if tag is not None:
+            hits = [p for p in hits if store.has_tag(p, tag)]
+        if min_rating:
+            hits = [p for p in hits if (store.get(p).rating or 0) >= min_rating]
+        rows = [(p, False) for p in hits]
+        if not self._filters_active():
+            known = set(self.library.paths)
+            rows += [(p, True) for p in store.annotated() if p not in known]
+        return rows
 
     def refresh_list(self) -> None:
-        """Rebuild the rows from the library, the search box and the two filters."""
+        """Rebuild the rows, keeping the current path selected where it still exists."""
         self._refreshing = True
         try:
             current = self.current_path()
-            hits = self.library.search(self.search.text(), limit=max(1, len(self.library)), annotations=self.annotations)
-            tag = self.tag_filter.currentText() if self.tag_filter.currentIndex() > 0 else None
-            min_rating = int(self.rating_filter.currentData() or 0)
-            if tag is not None:
-                hits = [p for p in hits if self.annotations.has_tag(p, tag)]
-            if min_rating:
-                hits = [p for p in hits if (self.annotations.get(p).rating or 0) >= min_rating]
+            self._listed = self._rows()
             self.list.clear()
-            for rel in hits:
-                self.list.addItem(self._item(rel, orphan=False))
-            orphans = 0
-            if not self._filters_active():
-                known = set(self.library.paths)
-                for rel in self.annotations.annotated():
-                    if rel not in known:
-                        self.list.addItem(self._item(rel, orphan=True))
-                        orphans += 1
-            text = f"{len(hits)} file{'s' if len(hits) != 1 else ''}"
+            for rel, orphan in self._listed:
+                self.list.addItem(self._item(rel, orphan))
+            files = sum(1 for _rel, orphan in self._listed if not orphan)
+            orphans = len(self._listed) - files
+            text = f"{files} file{'s' if files != 1 else ''}"
             if orphans:
                 text += f", {orphans} annotated file{'s' if orphans != 1 else ''} missing on disk"
             self.count_label.setText(text)
@@ -2843,10 +3258,10 @@ class LibraryWindow(QMainWindow):
             self._refreshing = False
         self._on_current_item(self.list.currentItem(), None)
 
-    def _item(self, rel: str, *, orphan: bool) -> QListWidgetItem:
+    def _item(self, rel: str, orphan: bool) -> QListWidgetItem:
         item = QListWidgetItem(rel)
         item.setData(PATH_ROLE, rel)
-        item.setData(SUMMARY_ROLE, summary_for(self.annotations, rel))
+        item.setData(SUMMARY_ROLE, summary_for(self.hub.store, rel))
         item.setData(ORPHAN_ROLE, orphan)
         if orphan:
             item.setForeground(dim_color())
@@ -2861,14 +3276,6 @@ class LibraryWindow(QMainWindow):
         item = self.list.currentItem()
         return item.data(PATH_ROLE) if item is not None else None
 
-    def _select_path(self, rel: str | None) -> None:
-        for i in range(self.list.count()):
-            if self.list.item(i).data(PATH_ROLE) == rel:
-                self.list.setCurrentRow(i)
-                return
-        if self.list.count():
-            self.list.setCurrentRow(0)
-
     def _row_for(self, rel: str) -> QListWidgetItem | None:
         for i in range(self.list.count()):
             item = self.list.item(i)
@@ -2876,17 +3283,15 @@ class LibraryWindow(QMainWindow):
                 return item
         return None
 
-    def refresh_path(self, rel: str) -> None:
-        """Another host edited `rel`: repaint its row and the editor if it is current."""
-        item = self._row_for(rel)
+    def _select_path(self, rel: str | None) -> None:
+        item = self._row_for(rel) if rel is not None else None
         if item is not None:
-            item.setData(SUMMARY_ROLE, summary_for(self.annotations, rel))
-        if self.editor.path == rel:
-            self.editor.refresh()
-        self._refresh_tag_filter()
+            self.list.setCurrentItem(item)
+        elif self.list.count():
+            self.list.setCurrentRow(0)
 
     def _refresh_tag_filter(self) -> None:
-        wanted = [ANY_TAG] + self.annotations.vocabulary()
+        wanted = [ANY_TAG] + self.hub.store.vocabulary()
         have = [self.tag_filter.itemText(i) for i in range(self.tag_filter.count())]
         if wanted == have:
             return
@@ -2902,14 +3307,30 @@ class LibraryWindow(QMainWindow):
             return
         self.editor.set_path(current.data(PATH_ROLE) if current is not None else None)
 
-    def _on_changed(self, rel: str) -> None:
-        item = self._row_for(rel)
-        if item is not None:
-            item.setData(SUMMARY_ROLE, summary_for(self.annotations, rel))
+    # -- hub -----------------------------------------------------------------------------------
+
+    def _on_hub_changed(self, rel: str) -> None:
+        """Any host edited `rel`: re-apply the filters, or just repaint the row when nothing moved."""
+        if self._rows() != self._listed:
+            self.refresh_list()
+        else:
+            item = self._row_for(rel)
+            if item is not None:
+                item.setData(SUMMARY_ROLE, summary_for(self.hub.store, rel))
         self._refresh_tag_filter()
-        if self.owns_store:
-            self._save_timer.start()
-        self.changed.emit(rel)
+        if self.editor.path == rel:
+            self.editor.refresh()
+
+    def _on_hub_reloaded(self) -> None:
+        self.editor.set_store(self.hub.store)
+        self._report_load()
+        self._refresh_tag_filter()
+        self.refresh_list()
+
+    def _rescan(self) -> None:
+        self.library.refresh()
+        notes = self.hub.reload()
+        self.statusBar().showMessage(f"Library rescanned: {len(self.library)} audio files; {notes}.")
 
     def _focus_search(self) -> None:
         self.search.setFocus()
@@ -2919,7 +3340,7 @@ class LibraryWindow(QMainWindow):
         self.editor.escape()
         self.list.setFocus()
 
-    # -- playback ---------------------------------------------------------------------
+    # -- playback ---------------------------------------------------------------------------
 
     def _play_current(self, *, restart: bool = False) -> None:
         item = self.list.currentItem()
@@ -2956,43 +3377,34 @@ class LibraryWindow(QMainWindow):
             self._playing_rel = None  # the review window took the player
             self.transport.set_now_playing(None, None)
 
-    # -- persistence --------------------------------------------------------------------
+    # -- persistence -------------------------------------------------------------------------
 
     def _report_load(self) -> None:
-        if self.annotations.load_error and self.owns_store:
-            self.dialogs.error(self, "Library notes not loaded", self.annotations.load_error)
+        store = self.hub.store
+        if self.owns_hub and store.load_error:
+            self.dialogs.error(self, "Library notes not loaded", store.load_error)
         self.warning.setText(
-            f"Library notes not saved: fix {self.annotations.path.name} and restart" if self.annotations.read_only else ""
+            f"Library notes not loaded: fix {store.path.name} and rescan (F5)" if store.read_only else ""
         )
-        self.warning.setVisible(self.annotations.read_only)
+        self.warning.setVisible(store.read_only)
 
-    def _autosave(self) -> None:
-        if self.annotations.dirty:
-            self._save()
-
-    def _save(self) -> bool:
-        if not self.owns_store or self.annotations.read_only:
-            return False
-        try:
-            self.annotations.save()
-        except OSError as e:
-            self._save_timer.stop()
-            self.dialogs.error(self, "Save failed", f"Could not write library notes to {self.annotations.path}:\n{e}")
-            return False
-        self.statusBar().showMessage(f"Saved {datetime.now().strftime('%H:%M:%S')}")
-        return True
-
-    def flush(self) -> None:
-        self._save_timer.stop()
-        if self.owns_store and self.annotations.dirty:
-            self._save()
+    def flush(self) -> bool:
+        if not self.owns_hub:
+            return True
+        ok = self.hub.flush()
+        if ok and not self.hub.store.dirty:
+            self.statusBar().showMessage(f"Saved {datetime.now().strftime('%H:%M:%S')}")
+        return ok
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt override)
-        self.flush()
-        if self.owns_store and self.annotations.dirty and not self.annotations.read_only:
-            if not self.dialogs.quit_without_saving(self):
-                event.ignore()
-                return
+        if self.owns_hub:
+            while not self.hub.flush():
+                answer = self.dialogs.unsaved(self, "close", [self.hub.store.path.name])
+                if answer == "discard":
+                    break
+                if answer != "retry":
+                    event.ignore()
+                    return
         if self.owns_player:
             self.player.stop()
         self.settings.setValue("library_window/geometry", self.saveGeometry())
@@ -3001,7 +3413,8 @@ class LibraryWindow(QMainWindow):
 
 Notes for the implementer:
 - `test_someone_else_playing_clears_now_playing` relies on `source_changed`, not `state_changed`: the fake player is already PLAYING when the second `play` happens, so no state signal fires.
-- `FakeDialogs.quit_without_saving` returns `quit_answer` which defaults to `True`, which is what `test_save_failure_reports_and_keeps_dirty` relies on.
+- The filter signals are connected at the end of `_build_widgets`, after `_refresh_tag_filter` has populated the combo, so construction never triggers `refresh_list` before `self.list` exists.
+- `FakeDialogs.unsaved_answer` defaults to `"discard"`, which is what the owned-hub close tests rely on until they set it.
 
 - [ ] **Step 4: Run the tests**
 
@@ -3019,8 +3432,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
-
-### Task 12: Launch the viewer from the review window
+### Task 13: Launch the viewer from the review window
 
 **Files:**
 - Modify: `audio_picker/ui/main_window.py`
@@ -3028,21 +3440,22 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_ui_smoke.py`:
+Add `from audio_picker.ui.path_delegate import SUMMARY_ROLE` to the imports of `tests/test_ui_smoke.py`, then append:
 
 ```python
 # -- library viewer from the review window --------------------------------------------
 
 
-def test_library_viewer_opens_once_shares_player_and_stops_review_playback(qtbot, win):
+def test_library_viewer_opens_once_shares_hub_and_player_and_stops_review_playback(qtbot, win):
     press(qtbot, win, Qt.Key.Key_1)
     n = len(win.player.calls)
     win.actions["library"].trigger()
     lw = win.library_window
     assert lw.isVisible()
     assert lw.player is win.player
+    assert lw.hub is win.hub
     assert ("stop",) in win.player.calls[n:]  # the viewer's transport bar also logs set_loop after it
-    assert not lw.owns_store and not lw.owns_player
+    assert not lw.owns_hub and not lw.owns_player
     win.actions["library"].trigger()
     assert win.library_window is lw
     assert [a.text() for a in win.menuBar().actions()[0].menu().actions() if a.text()][:5] == [
@@ -3058,7 +3471,7 @@ def test_viewer_playback_clears_the_review_highlight(qtbot, win):
     press(qtbot, win, Qt.Key.Key_1)
     win.actions["library"].trigger()
     lw = win.library_window
-    press(qtbot, win, Qt.Key.Key_1)  # review plays again while the viewer is open
+    press(qtbot, win, Qt.Key.Key_1)  # the review plays again while the viewer is open
     assert win.panel.rows[0].is_playing
     lw.list.setCurrentRow(3)
     lw.list.itemDoubleClicked.emit(lw.list.item(3))
@@ -3066,7 +3479,7 @@ def test_viewer_playback_clears_the_review_highlight(qtbot, win):
     assert win.transport.now_playing.text() == "Nothing playing"
 
 
-def test_viewer_edits_go_through_the_review_window_timer_and_dock(qtbot, make_win, tmp_root):
+def test_viewer_and_dock_stay_in_sync_through_the_hub(qtbot, make_win, tmp_root):
     w = make_win(tmp_root)
     w.notes_dock.show()
     w.actions["library"].trigger()
@@ -3079,22 +3492,31 @@ def test_viewer_edits_go_through_the_review_window_timer_and_dock(qtbot, make_wi
     assert lw.list.item(1).data(SUMMARY_ROLE) == "★1"
 
 
+def test_rescan_in_the_review_window_refreshes_an_open_viewer(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    lw = w.library_window
+    (tmp_root / "packA" / "new.wav").write_bytes(b"")
+    w.actions["rescan"].trigger()
+    assert "packA/new.wav" in [lw.list.item(i).text() for i in range(lw.list.count())]
+
+
 def test_open_other_review_closes_the_viewer(make_win, tmp_root, tmp_path):
     w = make_win(tmp_root)
     w.actions["library"].trigger()
-    other_root = tmp_path / "other_audio"
-    shutil.copytree(FIXTURE_ROOT, other_root)
-    other_review = tmp_path / "other" / "review.json"
-    other_review.parent.mkdir()
-    data = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-    data["root"] = "../other_audio"
-    other_review.write_text(json.dumps(data), encoding="utf-8")
+    other_review, _other_root = _other_review(tmp_path)
     w.dialogs.open_target = other_review
     w.actions["open"].trigger()
     assert w.library_window is None
-```
 
-Add `from audio_picker.ui.path_delegate import SUMMARY_ROLE` to the test imports.
+
+def test_quit_closes_the_viewer(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    lw = w.library_window
+    assert w.close()
+    assert not lw.isVisible()
+```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -3127,17 +3549,16 @@ Add methods in the library annotations section:
         lw = LibraryWindow(
             self.root,
             self.library,
-            self.annotations,
+            self.hub,
             self.player,
             self.settings,
-            owns_store=False,
+            owns_hub=False,
             owns_player=False,
             dialogs=self.dialogs,
             parent=self,
         )
         lw.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         lw.destroyed.connect(lambda *_a: setattr(self, "library_window", None))
-        lw.changed.connect(self._on_viewer_changed)
         lw.play_requested.connect(self._on_viewer_play)
         self.library_window = lw
         lw.show()
@@ -3148,51 +3569,38 @@ Add methods in the library annotations section:
             self.library_window = None
             lw.close()
 
-    def _on_viewer_changed(self, rel: str) -> None:
-        self.annotation_changed(rel)
-        if self.notes_editor.path == rel:
-            self.notes_editor.refresh()
-
     def _on_viewer_play(self) -> None:
         self._playing_cid = None
         self.panel.set_playing(None)
         self.transport.set_now_playing(None, None)
 ```
 
-Change `annotation_changed` so dock edits reach the viewer:
+A `QMainWindow` is a top-level window even with a parent, so the viewer floats beside the review window and closes with it.
 
-```python
-    def annotation_changed(self, rel: str = "") -> None:
-        """An editor wrote to the store; debounce the sidecar save and keep the other hosts in sync."""
-        self._annotations_timer.start()
-        if rel and self.library_window is not None:
-            self.library_window.refresh_path(rel)
-```
-
-Guard against a loop: `LibraryWindow.refresh_path` only sets item data and calls `editor.refresh()`, which never emits `changed`, so there is no feedback cycle.
-
-In `_open_other`, before `self.flush()` at the top: `self._close_library_window()`.
+In `_open_other`, right after the `settle_unsaved` check: `self._close_library_window()`.
 
 In `closeEvent`, before `self.player.stop()`: `self._close_library_window()`.
+
+Nothing connects the viewer's edits to the review window: both subscribe to the same hub, which Task 12 already wired on the viewer side and Task 10 on the dock side.
 
 - [ ] **Step 4: Run the whole suite**
 
 Run: `.venv/Scripts/python -m pytest -q`
-Expected: all PASS. If `test_viewer_playback_clears_the_review_highlight` fails because `FakePlayer.play` emits no state change on the second play (already PLAYING), that is fine: the assertion depends on `_on_viewer_play`, not on the state signal.
+Expected: all PASS.
 
 - [ ] **Step 5: Lint and commit**
 
 ```bash
 .venv/Scripts/ruff check audio_picker tests && .venv/Scripts/ruff format audio_picker tests
 git add audio_picker/ui/main_window.py tests/test_ui_smoke.py
-git commit -m "Open the library viewer from the review window, sharing store and player
+git commit -m "Open the library viewer from the review window, sharing hub and player
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 13: CLI `library --root DIR` and `run_library`
+### Task 14: CLI `library --root DIR` and `run_library`
 
 **Files:**
 - Modify: `audio_picker/cli.py`
@@ -3232,13 +3640,13 @@ def test_library_bad_root_is_exit_1(library_gui, tmp_path, capsys):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/Scripts/python -m pytest tests/test_cli.py -q -k library`
-Expected: FAIL (`AttributeError: module 'audio_picker.cli' has no attribute '_launch_library'`).
+Expected: FAIL with `AttributeError: module 'audio_picker.cli' has no attribute '_launch_library'`.
 
 - [ ] **Step 3: Implement**
 
 In `audio_picker/cli.py`:
 
-Docstring: add the line `    audio-picker library --root DIR                  # browse and annotate the library` after the `check` line.
+Docstring: add `    audio-picker library --root DIR                  # browse, rate and tag the library` after the `check` line.
 
 `SUBCOMMANDS = ("gui", "import-csv", "export", "check", "library")`.
 
@@ -3262,7 +3670,7 @@ Add a handler and register it:
 
 ```python
 def _cmd_library(args: argparse.Namespace) -> int:
-    root = resolve_root("", None, args.root)
+    root = resolve_root("", None, args.root)  # only the --root branch of resolve_root is used
     return _launch_library(root)
 ```
 
@@ -3280,13 +3688,14 @@ In `audio_picker/ui/app.py`, add:
 
 ```python
 def run_library(root: Path) -> int:
-    """Open the standalone library viewer owning its own store and player."""
+    """Open the standalone library viewer owning its own hub and player."""
     ensure_media_backend()
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
     from ..annotations import LibraryAnnotations
     from ..library import AudioLibrary
+    from .annotation_hub import AnnotationHub
     from .library_window import LibraryWindow
 
     app = QApplication.instance() or QApplication(sys.argv)
@@ -3296,17 +3705,17 @@ def run_library(root: Path) -> int:
     window = LibraryWindow(
         root,
         AudioLibrary(root),
-        LibraryAnnotations(root),
+        AnnotationHub(LibraryAnnotations(root)),
         Player(),
         QSettings("audio-picker", "audio-picker"),
-        owns_store=True,
+        owns_hub=True,
         owns_player=True,
     )
     window.show()
     return app.exec()
 ```
 
-(`LibraryWindow._report_load` shows the malformed-sidecar dialog itself when it owns the store.)
+(`LibraryWindow._report_load` shows the malformed-sidecar dialog itself when it owns the hub.)
 
 - [ ] **Step 4: Run the tests**
 
@@ -3316,7 +3725,7 @@ Expected: all PASS. `test_library_bad_root_is_exit_1` passes because `resolve_ro
 - [ ] **Step 5: Manual launch check**
 
 Run: `.venv/Scripts/audio-picker library --root tests/fixtures/audio`
-Expected: the viewer opens listing four files; double-click plays; close it. Then run the review GUI, open File, Library viewer, confirm it opens and closes. Delete `tests/fixtures/audio/audio-picker-library.json` if the manual session created one (`git status` must stay clean apart from the plan's files).
+Expected: the viewer opens listing four files; double-click plays; F5 rescans; close it. Then run the review GUI on `examples/review.json`, open File, Library viewer, confirm it opens and closes, and that View, Library notes shows the dock. Delete `tests/fixtures/audio/audio-picker-library.json` if the manual session created one; `git status` must show nothing under `tests/fixtures/`.
 
 - [ ] **Step 6: Lint and commit**
 
@@ -3330,20 +3739,18 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 14: Screenshots
+### Task 15: Screenshots
 
 **Files:**
 - Modify: `tests/test_screenshots.py`
 
 - [ ] **Step 1: Add the screenshot tests**
 
-Add imports to `tests/test_screenshots.py`:
+Add to the imports of `tests/test_screenshots.py` (the annotations and hub imports were added in Task 11):
 
 ```python
 from audio_picker.ui.library_window import LibraryWindow
 ```
-
-(`LibraryAnnotations` was already added in Task 10.)
 
 Extend `test_main_window_screenshots` by adding, before the `horn_distant` line:
 
@@ -3368,7 +3775,14 @@ def test_library_window_screenshot(qtbot, tmp_path, theme):
     store.add_tag("packZ/gone.wav", "orphan")
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     w = LibraryWindow(
-        root, AudioLibrary(root), store, FakePlayer(), settings, owns_store=True, owns_player=True, dialogs=FakeDialogs()
+        root,
+        AudioLibrary(root),
+        AnnotationHub(store),
+        FakePlayer(),
+        settings,
+        owns_hub=True,
+        owns_player=True,
+        dialogs=FakeDialogs(),
     )
     w.resize(1100, 640)
     qtbot.addWidget(w)
@@ -3381,7 +3795,7 @@ def test_library_window_screenshot(qtbot, tmp_path, theme):
 - [ ] **Step 2: Run the screenshot tests and look at the images**
 
 Run: `.venv/Scripts/python -m pytest tests/test_screenshots.py -q`
-Expected: PASS. Then open `screenshots/main_dock_light.png`, `screenshots/main_dock_dark.png`, `screenshots/dialog_add_candidate_light.png`, `screenshots/library_light.png` and `screenshots/library_dark.png` with the Read tool and check: stars visible and legible, chips readable in dark, the dimmed row summary readable in dark, the dock not squeezing the slot panel below usable width, and the dialog's two columns both visible at 920 px. Fix any contrast problem in `annotation_editor.py` styles (use `dim_css()` and palette roles, never fixed colours) and rerun.
+Expected: PASS. Then open `screenshots/main_dock_light.png`, `screenshots/main_dock_dark.png`, `screenshots/dialog_add_candidate_light.png`, `screenshots/dialog_add_candidate_dark.png`, `screenshots/library_light.png` and `screenshots/library_dark.png` with the Read tool and check: stars visible and legible, chips readable in dark, the dimmed row summary readable in dark, the dock not squeezing the slot panel below usable width, the dialog's two columns and the hint line both visible at 920 px. Fix any contrast problem in `annotation_editor.py` styles (use `dim_css()` and palette roles, never fixed colours) and rerun.
 
 - [ ] **Step 3: Commit**
 
@@ -3394,7 +3808,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 15: README and shortcuts dialog
+### Task 16: README and shortcuts dialog
 
 **Files:**
 - Modify: `README.md`
@@ -3424,17 +3838,19 @@ Three places edit the same data:
 - **View, Library notes** in the review window shows a dock that follows the
   active candidate.
 - The **Add candidate** dialog shows the same editor for the highlighted
-  result, and `#tag` in its search box matches a tag.
+  result, and `#tag` in its search box matches a tag. Notes made there are
+  kept even if you cancel adding the candidate.
 - **File, Library viewer** (or `audio-picker library --root DIR`) opens a
   standalone browser with a tag filter, a minimum-rating filter, `#tag`
-  search, and playback with Space and `S`. Annotated files that no longer
-  exist on disk are listed greyed at the end.
+  search, playback with Space and `S`, and `F5` to rescan. Annotated files
+  that no longer exist on disk are listed greyed at the end.
 
-Edits autosave after half a second and on `Ctrl+S`, close, and opening
-another review. If the sidecar is malformed the app says so once, edits stay
-in memory, and nothing is written until the file is fixed and you choose
-Rescan library. Rescan also reloads a hand-edited sidecar when nothing is
-unsaved.
+Edits autosave after half a second and on `Ctrl+S`. Quitting or opening
+another review first saves both the review and the library notes; if either
+cannot be written you are asked to try again, discard, or cancel. If the
+sidecar is malformed the app says so once, library notes become read-only,
+and Rescan library retries the load. Rescan also reloads a hand-edited
+sidecar when nothing is unsaved.
 ```
 
 - [ ] **Step 2: Update the shortcuts dialog**

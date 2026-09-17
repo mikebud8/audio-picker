@@ -107,12 +107,35 @@ def normalise_tag(raw: str) -> str                 # raises ValueError if empty
 ```
 
 Every mutator sets `dirty` and adds new tags to the vocabulary. Mutators
-never write to disk; the host owns the save timer (section 6).
+never write to disk; the hub (section 3.5) owns the save timer.
 
 One `LibraryAnnotations` instance exists per root per process. It is
 created where `AudioLibrary` is created today (`MainWindow.__init__` and the
-root-switch path in "open another review") and passed to every host, so all
-three views edit the same object.
+root-switch path in "open another review") and wrapped in one hub that every
+host shares, so all three views edit the same object.
+
+### 3.5 Hub (`ui/annotation_hub.py`)
+
+`AnnotationHub(QObject)` is the one Qt object between the pure store and its
+hosts. It holds `store`, owns the 500 ms single-shot save timer, and has
+three signals:
+
+- `changed(str)`: a host wrote the given path to the store. Hosts call
+  `notify_changed(rel)` after every write; the hub restarts the timer and
+  emits. Every other host re-reads what it shows for that path, and the
+  viewer re-applies its filters.
+- `reloaded()`: the store was replaced (`set_store`) or re-read from disk
+  (`reload`), or the library index changed. Hosts re-read everything.
+- `save_failed(str)`: a save raised `OSError`; the owning window shows the
+  message.
+
+`flush() -> bool` stops the timer and saves if dirty; false means the file
+is still unsaved. `reload() -> str` is the rescan hook: it re-reads the store
+unless it is dirty, always emits `reloaded`, and returns a status fragment.
+
+The window that created the hub owns it: the review window when launched
+with a review, the library viewer when launched standalone. Other hosts
+only call `notify_changed` and subscribe.
 
 ### 3.4 Search
 
@@ -184,26 +207,30 @@ decisions or review autosave.
 
 ### 5.2 Add Candidate dialog
 
-`AddCandidateDialog` takes the store as an extra argument. The layout becomes
+`AddCandidateDialog` takes the hub as an extra argument. The layout becomes
 a horizontal split: the existing column on the left, an `AnnotationEditor`
-on the right. Default size 920 by 480. The editor's path follows
+on the right over a muted hint "Notes are saved to the library even if you
+cancel". Default size 920 by 480. The editor's path follows
 `currentItemChanged` on the results list and `Browse…` when the chosen file
-is under the root. Search remains path-only plus `#tag` terms from section
-3.4, which come for free; the combo filters are phase three.
+is under the root. Every edit calls `hub.notify_changed`, so the owning
+window's timer saves while the dialog is still open; cancelling the
+candidate never discards library notes. Search remains path-only plus
+`#tag` terms from section 3.4, which come for free; the combo filters are
+phase three.
 
 ### 5.3 Standalone library viewer (`ui/library_window.py`)
 
-`LibraryWindow(QMainWindow)`, constructed with `root`, `library`,
-`annotations`, `player`, `settings`, and an `owns_store: bool` flag.
+`LibraryWindow(QMainWindow)`, constructed with `root`, `library`, `hub`,
+`player`, `settings`, and `owns_hub` and `owns_player` flags.
 
 Opened two ways:
 
 - `audio-picker library --root DIR`. No review file. Creates its own
-  `AudioLibrary`, `LibraryAnnotations` and `Player`; `owns_store` is true.
+  `AudioLibrary`, `LibraryAnnotations`, hub and `Player`; owns both.
 - File menu, "Library viewer…" in the review window. Receives the review's
-  root, library, store and player; `owns_store` is false. The review window
-  stops playback before showing it. Only one instance at a time; a second
-  request raises the existing window.
+  root, library, hub and player; owns neither. The review window stops
+  playback before showing it. Only one instance at a time; a second request
+  raises the existing window.
 
 Layout:
 
@@ -221,14 +248,22 @@ Layout:
 Behaviour:
 
 - Filters combine with AND: search terms, tag combo, min rating.
-- The current row drives the editor. `changed` from the editor repaints that
-  row's summary and refreshes the tag combo if the vocabulary grew.
+- The current row drives the editor. On every hub `changed`, from this
+  window or any other host, the viewer recomputes the row list: if it
+  differs from what is shown (a tag removed while filtering on it, a rating
+  lowered below the threshold, an orphan cleared), the list is rebuilt
+  keeping the current row where it still exists; otherwise only that row's
+  summary is repainted. The tag combo is refreshed if the vocabulary grew.
+  On hub `reloaded` the list, the tag combo and the editor are rebuilt from
+  the current store and library index.
 - Double-click or Space on a row plays it through the player; Space while
   that row is playing pauses and resumes; `S` stops. Enter is not bound.
   Single keys are suppressed while a text field has focus, using the same
   rule as the main window.
 - Window geometry saved under `library_window/geometry`.
-- Close: flush if `owns_store`, stop the player if it owns it.
+- Close: if it owns the hub, flush; on failure the unsaved-changes dialog
+  from section 6 offers try again, discard and close, or cancel. Stops the
+  player if it owns it.
 
 Playback when opened from the review window shares the review's `Player`.
 Both transport bars reflect the one player. During implementation, verify
@@ -239,29 +274,40 @@ viewer gets its own `Player` and each window stops the other's on play.
 
 ## 6. Persistence and errors
 
-- **Save timer.** The host that owns the store owns a 500 ms single-shot
-  timer, restarted by every mutation through a `mark_dirty()` call the
-  editor makes after each write. The review window owns it when launched
-  with a review; the library window owns it standalone.
+- **Save timer.** The hub owns a 500 ms single-shot timer, restarted by
+  every `notify_changed`. The review window owns the hub when launched with
+  a review; the library window owns it standalone.
 - **Flush points.** Before the review window opens another review, when the
   standalone viewer closes, and on quit. `Ctrl+S` in the review window
-  flushes the review and the sidecar.
+  flushes the review and the sidecar. `MainWindow.flush()` returns true
+  only when both files are saved.
+- **Blocking on failure.** Quitting, closing the standalone viewer and
+  opening another review first flush. If anything is still unsaved, one
+  modal dialog names the files and offers "Try again", "Discard and
+  <action>", and "Cancel" (default). Try again flushes once more and asks
+  again on failure. This replaces the review's yes/no "Quit without
+  saving?" question and closes the existing gap where opening another
+  review after a failed review save silently dropped the changes.
 - **One writer.** One store per process, so the three hosts never race.
   External change detection is not built for the sidecar in phase one.
   Known gap: a hand edit to the sidecar while the app is open is overwritten
   by the next save.
-- **Rescan.** "Rescan library" rebuilds the path index and, if the store is
-  not dirty, calls `reload()` on it so a deliberate hand edit is picked up.
-  If dirty, the status bar says the sidecar was not reloaded.
+- **Rescan.** "Rescan library" rebuilds the path index and calls
+  `hub.reload()`, which re-reads the sidecar if the store is not dirty so a
+  deliberate hand edit is picked up, then emits `reloaded` either way so
+  the dock and an open viewer refresh. If dirty, the status bar says the
+  sidecar was not reloaded.
 - **Save failure.** Modal error, dirty flag kept, same as the review.
 - **Malformed sidecar at load.** The error is shown once in a dialog. The
-  store starts empty in memory with `read_only` true, so `save()` is a no-op,
-  and a persistent status bar message reads "Library notes not saved: fix
+  store starts empty in memory with `read_only` true. Every editor is
+  disabled while the store is read-only, so nothing can be edited or lost,
+  and a persistent status bar message reads "Library notes not loaded: fix
   audio-picker-library.json and rescan". Rescan retries the load and clears
-  `read_only` on success.
-- **Root switch.** Opening another review with a different root flushes,
-  then replaces the library and the store together, and points the dock and
-  any open viewer at the new store.
+  `read_only` on success, which re-enables the editors.
+- **Root switch.** Opening another review with a different root settles
+  unsaved changes as above, closes an open viewer, then replaces the
+  library and the store together through `hub.set_store`, which re-points
+  the dock.
 
 ## 7. Command line
 
@@ -279,12 +325,18 @@ matching `resolve_root` errors. Exit codes as in design 7.
   `min_rating`, `annotated`; `reload` picks up a disk change.
 - `tests/test_library.py`: `#tag` term with and without a store; mixed path
   and tag terms.
+- `tests/test_annotation_hub.py`: `notify_changed` emits and autosaves;
+  `flush` reports failure through `save_failed`; `reload` refuses a dirty
+  store but still emits `reloaded`; `set_store` stops the timer and emits.
 - `tests/test_ui_smoke.py`: editor star click, tag commit and note edit
   write through and emit `changed`; clearing a rating by re-click; dock
   follows the active candidate across slot changes; dialog editor follows
-  the highlighted result; standalone window opens on the fixture root,
-  filters by tag and by rating, plays a row, and lists an orphan greyed;
-  `owns_store` close flushes.
+  the highlighted result and its edits autosave while open; standalone
+  window opens on the fixture root, filters by tag and by rating, plays a
+  row, lists an orphan greyed, and drops a row whose tag or rating no longer
+  matches the filter; an owned hub flushes on close and a failed flush asks
+  try again / discard / cancel; a malformed sidecar disables every editor
+  until rescan succeeds.
 - `tests/test_screenshots.py`: review window with the dock open, the
   widened dialog, and the standalone viewer, light and dark.
 - `tests/test_cli.py`: `library --root DIR` dispatch; missing root exits 1.
