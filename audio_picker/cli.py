@@ -5,6 +5,7 @@
     audio-picker import-csv INPUT.csv -o REVIEW.json --root DIR --project NAME [--force]
     audio-picker export REVIEW.json [--root DIR] [-o MANIFEST.json] [--strict]
     audio-picker check REVIEW.json [--root DIR]
+    audio-picker library --root DIR                  # browse, rate and tag the library
 
 Exit codes: 0 success; 1 validation or file error (message on stderr);
 2 usage error.
@@ -25,7 +26,7 @@ from .export import build_manifest
 from .model import ReviewError, load, save
 from .paths import resolve_root
 
-SUBCOMMANDS = ("gui", "import-csv", "export", "check")
+SUBCOMMANDS = ("gui", "import-csv", "export", "check", "library")
 
 
 def _launch_gui(review_path: Path, root: Path) -> int:
@@ -33,6 +34,12 @@ def _launch_gui(review_path: Path, root: Path) -> int:
     from .ui.app import run
 
     return run(review_path, root)
+
+
+def _launch_library(root: Path) -> int:
+    from .ui.app import run_library
+
+    return run_library(root)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,6 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     chk = sub.add_parser("check", help="report missing files and other findings")
     chk.add_argument("review", help="review JSON file")
     chk.add_argument("--root", help="audio library directory (overrides the file's root)")
+
+    lib = sub.add_parser("library", help="browse, rate and tag the audio library without a review file")
+    lib.add_argument("--root", required=True, help="audio library directory")
     return parser
 
 
@@ -137,11 +147,17 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_library(args: argparse.Namespace) -> int:
+    root = resolve_root("", None, args.root)  # only the --root branch of resolve_root is used
+    return _launch_library(root)
+
+
 _HANDLERS = {
     "gui": _cmd_gui,
     "check": _cmd_check,
     "export": _cmd_export,
     "import-csv": _cmd_import,
+    "library": _cmd_library,
 }
 
 

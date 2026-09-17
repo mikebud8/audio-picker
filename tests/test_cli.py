@@ -264,3 +264,28 @@ def test_import_csv_error_writes_nothing(tmp_path, capsys):
     assert code == 1
     assert not out.exists()
     assert "A001" in capsys.readouterr().err
+
+
+# -- library ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def library_gui(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "_launch_library", lambda root: calls.append(root) or 0)
+    return calls
+
+
+def test_library_subcommand_launches_the_viewer(library_gui):
+    assert cli.main(["library", "--root", str(FIXTURE_ROOT)]) == 0
+    assert library_gui == [FIXTURE_ROOT]
+
+
+def test_library_requires_root(capsys):
+    assert cli.main(["library"]) == 2
+
+
+def test_library_bad_root_is_exit_1(library_gui, tmp_path, capsys):
+    assert cli.main(["library", "--root", str(tmp_path / "nope")]) == 1
+    assert library_gui == []
+    assert "nope" in capsys.readouterr().err
