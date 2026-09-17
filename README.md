@@ -53,7 +53,7 @@ selection or a selected file is missing; the manifest is still written.
 | `L` | Toggle loop. |
 | `Y` / `N` | Mark the active candidate yay / nay (again to clear). |
 | `Enter` | Select the active candidate for the slot. |
-| `Escape` | Leave a text field and return to the slot tree. |
+| `Escape` | Leave a text field (clears a half-typed tag) and return to the slot tree. |
 | `Ctrl+Down` / `Ctrl+Up` | Next / previous slot in the filtered tree, wrapping. |
 | `Ctrl+F` | Focus the slot search box. |
 | `Ctrl+S` | Save now (edits autosave after half a second anyway). |
@@ -73,13 +73,10 @@ The standalone library viewer (`File, Library viewer…` or
 | `S` | Stop. |
 | `L` | Toggle loop. |
 | `Ctrl+F` | Focus the search box. |
-| `Ctrl+S` | Save now. |
+| `Ctrl+S` | Save now (standalone viewer; opened from the review window, notes autosave and the review's Ctrl+S saves them). |
 | `F5` | Rescan the library. |
 | `Ctrl+W` | Close the viewer. |
-| `Escape` | Leave a text field and return to the file list. |
-
-In the review window, `Escape` also clears a half-typed tag in the Library
-notes dock before returning focus to the slot tree.
+| `Escape` | Leave a text field (clears a half-typed tag) and return to the file list. |
 
 The harness from the codec check still exists:
 
@@ -104,15 +101,24 @@ Three places edit the same data:
   kept even if you cancel adding the candidate.
 - **File, Library viewer** (or `audio-picker library --root DIR`) opens a
   standalone browser with a tag filter, a minimum-rating filter, `#tag`
-  search, playback with Space and `S`, and `F5` to rescan. Annotated files
-  that no longer exist on disk are listed greyed at the end.
+  search, playback with Space and `S`, and `F5` to rescan. When no search or
+  filter is active, annotated files that no longer exist on disk are listed
+  greyed at the end. Their annotations stay in the sidecar until you clear
+  them from the viewer.
+
+A tag is trimmed, lowercased and its internal spaces become hyphens, so
+"Foot Step" becomes `foot-step`. Enter or a comma commits the tag field, and
+it autocompletes from every tag already used anywhere in the library. A
+file whose rating, tags and note are all cleared drops out of the sidecar
+entirely, which is plain JSON you can commit alongside the packs.
 
 Edits autosave after half a second and on `Ctrl+S`. Quitting or opening
 another review first saves both the review and the library notes; if either
 cannot be written you are asked to try again, discard, or cancel. If the
-sidecar is malformed the app says so once, library notes become read-only
-(every editor is disabled), and Rescan library (F5 in the viewer) retries
-the load. Rescan also reloads a hand-edited sidecar when nothing is unsaved.
+sidecar is malformed the app shows the error and keeps a warning in the
+status bar, library notes become read-only (every editor is disabled), and
+Rescan library (F5 in the viewer) retries the load. Rescan also reloads a
+hand-edited sidecar when nothing is unsaved.
 
 ## Codec check
 
