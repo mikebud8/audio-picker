@@ -8,6 +8,7 @@ through to the store and emits `changed(rel)`.
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QStringListModel, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QCompleter,
     QFrame,
@@ -28,6 +29,7 @@ from .path_delegate import path_html
 from .theme import dim_color, dim_css
 
 FILLED, EMPTY = "★", "☆"
+MIN_TAIL_PX = 60  # below this the pack folder gets elided too, rather than eating the file name
 
 
 class FlowLayout(QLayout):
@@ -113,6 +115,13 @@ class TagChip(QFrame):
 
 
 class AnnotationEditor(QWidget):
+    """Stars, tag chips and a note for one path.
+
+    Hosts with very little vertical space should wrap this in a `QScrollArea`.
+    After the store is reloaded from disk, a host must call `refresh()` or
+    `set_store()` so the read-only state is re-evaluated.
+    """
+
     changed = Signal(str)  # relative path whose annotation was edited
     escape_pressed = Signal()  # Escape in a text field, after the tag field was cleared
 
@@ -145,7 +154,8 @@ class AnnotationEditor(QWidget):
             star.setAutoRaise(True)
             star.setCursor(Qt.CursorShape.PointingHandCursor)
             star.setStyleSheet("font-size: 16pt;")
-            star.setToolTip(f"Rate {n} of 5" + (" (junk)" if n == 1 else ""))
+            # The star tooltips shadow the row's, so each one repeats what the rating means.
+            star.setToolTip(f"Rate {n} of 5" + (" (junk)" if n == 1 else "") + ". Recording quality, not preference")
             star.clicked.connect(lambda _checked=False, n=n: self._on_star(n))
             rating_layout.addWidget(star)
             self.stars.append(star)
@@ -169,7 +179,14 @@ class AnnotationEditor(QWidget):
         self.completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.tag_input.setCompleter(self.completer)
-        # Enter is handled in eventFilter so a dialog's default button never sees it.
+        # With the popup closed, eventFilter consumes Enter so a dialog's default button never sees it.
+        # With the popup open, QCompleter forwards the key with `widget->event()`, which bypasses event
+        # filters, so `returnPressed` is the one that fires; and picking a completion (Down-Enter, or a
+        # click) fires `activated` instead. Both commit here; whichever runs second is a duplicate no-op.
+        # `activated` must be queued: QLineEdit's own handler sets the field text after a direct slot and
+        # would leave the completed word sitting in the field.
+        self.tag_input.returnPressed.connect(self._commit_tag_field)
+        self.completer.activated[str].connect(self._on_completion_activated, Qt.ConnectionType.QueuedConnection)
         self.tag_input.textEdited.connect(self._on_tag_text_edited)
         self.tag_input.installEventFilter(self)
         layout.addWidget(self.tag_input)
@@ -251,8 +268,13 @@ class AnnotationEditor(QWidget):
         folder, sep, rest = rel.partition("/")
         fm = self.path_label.fontMetrics()
         available = max(40, self.path_label.width() - 8)
-        if sep:
-            rest = fm.elidedText(rest, Qt.TextElideMode.ElideMiddle, available - fm.horizontalAdvance(folder + "/"))
+        bold_font = QFont(self.path_label.font())
+        bold_font.setBold(True)
+        # The folder renders bold, so measure it bold; a folder that leaves no room for the
+        # file name is elided along with the rest instead of swallowing it.
+        folder_width = QFontMetrics(bold_font).horizontalAdvance(folder + "/") if sep else 0
+        if sep and available - folder_width >= MIN_TAIL_PX:
+            rest = fm.elidedText(rest, Qt.TextElideMode.ElideMiddle, available - folder_width)
             shown = f"{folder}/{rest}"
         else:
             shown = fm.elidedText(rel, Qt.TextElideMode.ElideMiddle, available)
@@ -262,6 +284,12 @@ class AnnotationEditor(QWidget):
         super().resizeEvent(event)
         if self._rel is not None:
             self._render_path()
+        self._fit_chips()
+
+    def _fit_chips(self) -> None:
+        """Hold the chip area open at its wrapped height; otherwise a short host clips rows silently."""
+        height = self.chips_layout.heightForWidth(self.chips_container.width()) if self.chips else 0
+        self.chips_container.setMinimumHeight(max(0, height))
 
     def _show_rating(self, rating: int | None) -> None:
         for n, star in zip(RATINGS, self.stars):
@@ -280,6 +308,7 @@ class AnnotationEditor(QWidget):
             self.chips_layout.addWidget(chip)
             self.chips.append(chip)
         self.chips_container.setVisible(bool(tags))
+        self._fit_chips()
         self.chips_container.updateGeometry()
 
     # -- editing --------------------------------------------------------------
@@ -316,6 +345,11 @@ class AnnotationEditor(QWidget):
         self._commit_tag(self.tag_input.text())
         self.tag_input.clear()
 
+    def _on_completion_activated(self, text: str) -> None:
+        """A completion was chosen in the popup (Enter or a click)."""
+        self._commit_tag(text)
+        self.tag_input.clear()
+
     def _on_tag_text_edited(self, text: str) -> None:
         if "," not in text:
             return
@@ -348,7 +382,7 @@ class AnnotationEditor(QWidget):
                 return True  # consumed: a dialog's default button must not fire
             if key == Qt.Key.Key_Escape:
                 if obj is self.tag_input and self.completer.popup().isVisible():
-                    return False  # let the completer close its popup first
+                    return False  # belt and braces: the popup has already eaten Escape to close itself
                 self.escape()
                 self.escape_pressed.emit()
                 return True

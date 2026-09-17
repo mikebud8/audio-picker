@@ -155,6 +155,120 @@ def test_read_only_store_shows_but_disables_editing(qtbot, tmp_path):
     assert "read-only" in e.tag_input.placeholderText()
 
 
+def _settle(qtbot, editor) -> None:
+    """Let the queued `activated` commit land. `qtbot.wait(0)` does not spin the loop."""
+    qtbot.wait(10)
+    qtbot.waitUntil(lambda: editor.tag_input.text() == "")
+
+
+def _popup_for(qtbot, editor, prefix: str = "hi"):
+    """Type `prefix` into the tag field and wait for the completer popup to open."""
+    editor.activateWindow()
+    editor.tag_input.setFocus()
+    qtbot.keyClicks(editor.tag_input, prefix)
+    popup = editor.completer.popup()
+    qtbot.waitUntil(popup.isVisible)
+    return popup
+
+
+def test_enter_with_the_popup_open_commits_the_typed_text(qtbot, editor, store):
+    editor.set_path("packA/click.wav")
+    seen: list[str] = []
+    editor.changed.connect(seen.append)
+    popup = _popup_for(qtbot, editor)
+    qtbot.keyClick(popup, Qt.Key.Key_Return)
+    _settle(qtbot, editor)
+    assert store.get("packA/click.wav").tags == ["hi", "ui"]
+    assert editor.tag_input.text() == ""
+    assert seen == ["packA/click.wav"]
+
+
+def test_choosing_a_completion_with_the_keyboard_commits_it_once(qtbot, editor, store):
+    editor.set_path("packA/click.wav")
+    seen: list[str] = []
+    editor.changed.connect(seen.append)
+    popup = _popup_for(qtbot, editor)
+    qtbot.keyClick(popup, Qt.Key.Key_Down)
+    qtbot.keyClick(popup, Qt.Key.Key_Return)
+    _settle(qtbot, editor)
+    assert store.get("packA/click.wav").tags == ["hit", "ui"]
+    assert editor.tag_input.text() == ""
+    assert seen == ["packA/click.wav"]
+
+
+def test_clicking_a_completion_commits_it_once(qtbot, editor, store):
+    editor.set_path("packA/click.wav")
+    seen: list[str] = []
+    editor.changed.connect(seen.append)
+    popup = _popup_for(qtbot, editor)
+    index = popup.model().index(0, 0)
+    qtbot.mouseClick(popup.viewport(), Qt.MouseButton.LeftButton, pos=popup.visualRect(index).center())
+    _settle(qtbot, editor)
+    assert store.get("packA/click.wav").tags == ["hit", "ui"]
+    assert editor.tag_input.text() == ""
+    assert seen == ["packA/click.wav"]
+
+
+def test_set_store_re_evaluates_read_only_both_ways(qtbot, editor, store, tmp_path):
+    editor.set_path("packA/click.wav")
+    assert editor.tag_input.isEnabled()
+    broken_root = tmp_path / "broken"
+    broken_root.mkdir()
+    (broken_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+
+    editor.set_store(LibraryAnnotations(broken_root))
+    editor.set_path("packA/click.wav")
+    assert not editor.tag_input.isEnabled()
+    assert not editor.note.isEnabled()
+    assert not any(s.isEnabled() for s in editor.stars)
+
+    editor.set_store(store)
+    editor.set_path("packA/click.wav")
+    assert editor.tag_input.isEnabled()
+    assert editor.note.isEnabled()
+    assert all(s.isEnabled() for s in editor.stars)
+    assert editor.chip_tags() == ["ui"]
+
+
+def test_several_commas_commit_each_tag_and_keep_the_tail(qtbot, editor, store):
+    editor.set_path("packB/hit.mp3")
+    qtbot.keyClicks(editor.tag_input, "alpha, Beta Gamma,,gamma,delt")
+    assert store.get("packB/hit.mp3").tags == ["alpha", "beta-gamma", "gamma", "hit"]
+    assert editor.tag_input.text() == "delt"
+
+
+def test_chip_removal_still_works_after_refresh(qtbot, editor, store):
+    editor.set_path("packA/click.wav")
+    editor.refresh()
+    with qtbot.waitSignal(editor.changed):
+        editor.chips[0].remove.click()
+    assert store.get("packA/click.wav").tags == []
+    assert editor.chip_tags() == []
+
+
+def test_escape_in_the_note_signals_and_clears_the_tag_field(qtbot, editor):
+    editor.set_path("packA/click.wav")
+    qtbot.keyClicks(editor.tag_input, "half")
+    editor.note.setFocus()
+    with qtbot.waitSignal(editor.escape_pressed):
+        qtbot.keyClick(editor.note, Qt.Key.Key_Escape)
+    assert editor.tag_input.text() == ""
+
+
+def test_a_long_pack_folder_does_not_swallow_the_file_name(qtbot, editor):
+    editor.resize(264, 400)
+    editor.layout().activate()
+    editor.set_path("sonniss-gdc-2019-game-audio-bundle-part-two-and-more/click.wav")
+    assert ".wav" in editor.path_label.text()
+
+
+def test_the_chip_area_keeps_its_wrapped_height(qtbot, editor):
+    editor.set_path("packA/click.wav")
+    assert editor.chips_container.minimumHeight() > 0
+    editor.set_path(None)
+    assert editor.chips_container.minimumHeight() == 0
+
+
 def test_completer_matches_anywhere_case_insensitively(editor):
     editor.set_path("packA/click.wav")
     editor.completer.setCompletionPrefix("I")
