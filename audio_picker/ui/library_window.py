@@ -99,10 +99,6 @@ class LibraryWindow(QMainWindow):
         self.refresh_list()
         self.list.setFocus()
 
-    @property
-    def annotations(self) -> LibraryAnnotations:
-        return self.hub.store
-
     # -- construction ----------------------------------------------------------------
 
     def _build_widgets(self) -> None:
@@ -252,7 +248,11 @@ class LibraryWindow(QMainWindow):
             self._select_path(current)
         finally:
             self._refreshing = False
-        self._on_current_item(self.list.currentItem(), None)
+        # The rebuild suppressed currentItemChanged, so tell the editor by hand — but only when
+        # something actually moved. A search keystroke that keeps the same row would otherwise
+        # reload the editor on every character.
+        if self.current_path() != current or self.editor.path != self.current_path():
+            self._on_current_item(self.list.currentItem(), None)
 
     def _item(self, rel: str, orphan: bool) -> QListWidgetItem:
         item = QListWidgetItem(rel)
