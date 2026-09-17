@@ -126,9 +126,12 @@ class LibraryWindow(QMainWindow):
         left_layout.addLayout(filters)
 
         self.list = QListWidget()
+        # Every row is one line high with this delegate, so Qt can skip the per-row
+        # sizeHint (a QTextDocument each) that made a search keystroke rebuild cost.
+        self.list.setUniformItemSizes(True)
         self.list.setItemDelegate(PathDelegate(self.list))
         self.list.currentItemChanged.connect(self._on_current_item)
-        self.list.itemDoubleClicked.connect(lambda _i: self._play_current(restart=True))
+        self.list.itemDoubleClicked.connect(lambda _i: self._play_current())
         left_layout.addWidget(self.list, 1)
         self.count_label = QLabel()
         left_layout.addWidget(self.count_label)
@@ -199,9 +202,12 @@ class LibraryWindow(QMainWindow):
         escape.activated.connect(self._escape)
 
     def _connect_player(self) -> None:
+        # Bound methods, never lambdas: the player is often shared with the review window and
+        # outlives this one, and Qt only disconnects a slot automatically when it is a bound
+        # method of the dying receiver. A lambda would keep calling into a deleted C++ object.
         self.player.state_changed.connect(self._on_player_state)
-        self.player.source_changed.connect(lambda _source: self._check_source())
-        self.player.error.connect(lambda text: self.statusBar().showMessage(f"Playback error: {text}"))
+        self.player.source_changed.connect(self._on_source_changed)
+        self.player.error.connect(self._on_player_error)
 
     # -- rows --------------------------------------------------------------------------------
 
@@ -301,13 +307,15 @@ class LibraryWindow(QMainWindow):
 
     def _on_hub_changed(self, rel: str) -> None:
         """Any host edited `rel`: re-apply the filters, or just repaint the row when nothing moved."""
+        # First: an edit that retired the last use of the filtered tag must reset the combo
+        # before the rows are recomputed, or the list would filter on a tag that is gone.
+        self._refresh_tag_filter()
         if self._rows() != self._listed:
             self.refresh_list()
         else:
             item = self._row_for(rel)
             if item is not None:
                 item.setData(SUMMARY_ROLE, summary_for(self.hub.store, rel))
-        self._refresh_tag_filter()
         if self.editor.path == rel:
             self.editor.refresh()
 
@@ -332,14 +340,15 @@ class LibraryWindow(QMainWindow):
 
     # -- playback ---------------------------------------------------------------------------
 
-    def _play_current(self, *, restart: bool = False) -> None:
+    def _play_current(self) -> None:
+        """Play the current row from the top.
+
+        Both callers want a restart: a double-click, and Space while the player is stopped.
+        """
         item = self.list.currentItem()
         if item is None or self.is_orphan(item):
             return
         rel = item.data(PATH_ROLE)
-        if not restart and self._playing_rel == rel and self.player.state is not PlayerState.STOPPED:
-            self.player.stop()
-            return
         self.play_requested.emit()
         self._playing_rel = rel
         self.player.play(to_absolute(self.root, rel))
@@ -360,6 +369,12 @@ class LibraryWindow(QMainWindow):
             self.transport.set_now_playing(None, None)
         else:
             self._check_source()
+
+    def _on_source_changed(self, _source) -> None:
+        self._check_source()
+
+    def _on_player_error(self, text: str) -> None:
+        self.statusBar().showMessage(f"Playback error: {text}")
 
     def _check_source(self) -> None:
         """Forget our now-playing when the shared player is playing someone else's file."""
@@ -386,8 +401,9 @@ class LibraryWindow(QMainWindow):
     def flush(self) -> bool:
         if not self.owns_hub:
             return True
+        was_dirty = self.hub.store.dirty
         ok = self.hub.flush()
-        if ok and not self.hub.store.dirty:
+        if ok and was_dirty:
             self.statusBar().showMessage(f"Saved {datetime.now().strftime('%H:%M:%S')}")
         return ok
 

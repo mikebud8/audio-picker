@@ -5,8 +5,8 @@ import shutil
 from pathlib import Path
 
 import pytest
+import shiboken6
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QApplication
 
 from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
 from audio_picker.library import AudioLibrary
@@ -14,7 +14,7 @@ from audio_picker.player import PlayerState
 from audio_picker.ui.annotation_hub import AnnotationHub
 from audio_picker.ui.library_window import LibraryWindow
 from audio_picker.ui.path_delegate import SUMMARY_ROLE
-from tests.test_ui_smoke import FakeDialogs, FakePlayer
+from tests.test_ui_smoke import FakeDialogs, FakePlayer, press
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "audio"
 ALL_FILES = ["loose/miss.wav", "packA/click.wav", "packA/confirm.ogg", "packB/hit.mp3"]
@@ -49,10 +49,10 @@ def make_lw(qtbot, tmp_path, root):
             dialogs=FakeDialogs(),
         )
         qtbot.addWidget(w)
-        w.show()
-        qtbot.waitExposed(w)
-        w.activateWindow()
-        qtbot.waitActive(w)
+        with qtbot.waitExposed(w):
+            w.show()
+        with qtbot.waitActive(w):  # a window made inside a test body is not active until the loop spins
+            w.activateWindow()
         return w
 
     return _make
@@ -71,10 +71,6 @@ def tag_choices(w: LibraryWindow) -> list[str]:
     return [w.tag_filter.itemText(i) for i in range(w.tag_filter.count())]
 
 
-def press(qtbot, w, key, modifier=Qt.KeyboardModifier.NoModifier) -> None:
-    qtbot.keyClick(QApplication.focusWidget() or w, key, modifier)
-
-
 # -- listing and filters ---------------------------------------------------------------
 
 
@@ -85,7 +81,33 @@ def test_lists_every_file_then_orphans_greyed(lw):
     assert lw.is_orphan(orphan)
     assert lw.list.item(1).data(SUMMARY_ROLE) == "★4 ui"
     assert lw.list.item(2).data(SUMMARY_ROLE) == ""
+    assert lw.count_label.text() == "4 files, 1 annotated file missing on disk"
     assert lw.windowTitle().endswith("Audio Picker")
+
+
+def test_empty_library_lists_only_orphans(qtbot, tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    store = LibraryAnnotations(empty)
+    store.add_tag("packZ/gone.wav", "orphan")
+    store.save()
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    w = LibraryWindow(
+        empty,
+        AudioLibrary(empty),
+        AnnotationHub(LibraryAnnotations(empty)),
+        FakePlayer(),
+        settings,
+        owns_hub=True,
+        owns_player=True,
+        dialogs=FakeDialogs(),
+    )
+    qtbot.addWidget(w)
+    with qtbot.waitExposed(w):
+        w.show()
+    assert rows(w) == ["packZ/gone.wav"]
+    assert w.count_label.text().startswith("0 files")
+    assert w.editor.path == "packZ/gone.wav"
 
 
 def test_search_hides_orphans_and_hash_terms_work(lw):
@@ -277,6 +299,19 @@ def test_unowned_hub_neither_reports_nor_stops_the_player(qtbot, make_lw, root):
     assert not any(c[0] in ("error", "unsaved") for c in w.dialogs.calls)
     assert w.close()
     assert not any(c == ("stop",) for c in w.player.calls)
+
+
+def test_player_signals_after_the_viewer_is_deleted_do_not_raise(make_lw):
+    """A shared player outlives this window, so every slot on it must be a bound method."""
+    player = FakePlayer()
+    w = make_lw(player=player)
+    assert w.close()
+    shiboken6.delete(w)
+    del w  # the widget is gone; pytest-qt must not try to close it again at teardown
+    # Lambda slots survive their receiver: these would reach a deleted C++ object and raise.
+    player.source_changed.emit(Path("x.wav"))
+    player.error.emit("boom")
+    player.seekable_changed.emit(True)
 
 
 def test_owned_hub_with_malformed_sidecar_reports_and_disables_editing(make_lw, root):

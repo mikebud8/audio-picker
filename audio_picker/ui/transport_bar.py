@@ -64,10 +64,12 @@ class TransportBar(QWidget):
         self.loop.toggled.connect(self._on_loop)
         self.volume.valueChanged.connect(self._on_volume)
 
+        # Bound methods, never lambdas: the player can outlive this bar (the review and library
+        # windows share one), and Qt only drops a slot with its receiver when it is a bound method.
         player.state_changed.connect(self._on_state)
         player.position_changed.connect(self._on_position)
-        player.seekable_changed.connect(lambda _s: self._refresh_slider())
-        player.source_changed.connect(lambda _s: self._refresh_slider())
+        player.seekable_changed.connect(self._on_source_or_seekable)
+        player.source_changed.connect(self._on_source_or_seekable)
 
     def set_now_playing(self, cid: str | None, name: str | None) -> None:
         self.now_playing.setText(f"{cid}  {name}" if cid else "Nothing playing")
@@ -93,6 +95,9 @@ class TransportBar(QWidget):
             self.slider.setRange(0, max(0, duration))
             self.slider.setValue(ms)
         self.time.setText(f"{fmt_ms(ms)} / {fmt_ms(duration)}")
+
+    def _on_source_or_seekable(self, _value) -> None:
+        self._refresh_slider()
 
     def _refresh_slider(self) -> None:
         has_source = self._player.source is not None
