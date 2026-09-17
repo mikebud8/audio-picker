@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
         notes_scroll.setWidgetResizable(True)
         notes_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         notes_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        notes_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Tab reaches the stars, not the viewport
         notes_scroll.setMinimumWidth(240)
         notes_scroll.setWidget(self.notes_editor)
         self.notes_dock = QDockWidget("Library notes", self)

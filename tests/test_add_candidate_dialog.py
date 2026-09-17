@@ -4,13 +4,14 @@ import shutil
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QApplication, QFileDialog
 
 from audio_picker.annotations import LibraryAnnotations
 from audio_picker.library import AudioLibrary
 from audio_picker.model import load
-from audio_picker.ui.annotation_hub import AnnotationHub
-from audio_picker.ui.dialogs import AddCandidateDialog
+from audio_picker.ui.annotation_hub import AUTOSAVE_MS, AnnotationHub
+from audio_picker.ui.dialogs import AddCandidateDialog, Dialogs
 from tests.test_ui_smoke import FakePlayer
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "review.json"
@@ -76,3 +77,31 @@ def test_escape_in_the_tag_field_does_not_close_the_dialog(qtbot, dialog):
     assert dialog.isVisible()
     assert dialog.editor.tag_input.text() == ""
     assert dialog.search.hasFocus()
+
+
+def test_browse_clears_the_stale_result_highlight(monkeypatch, dialog, root):
+    dialog.results.setCurrentRow(1)
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(root / "packB" / "hit.mp3"), ""))
+    )
+    dialog._browse()
+    assert dialog.editor.path == "packB/hit.mp3"
+    assert dialog.results.currentItem() is None
+
+
+def test_autosave_fires_inside_the_modal_loop(qtbot, root):
+    hub = AnnotationHub(LibraryAnnotations(root))
+    seen = {}
+
+    def drive():
+        d = next(w for w in QApplication.topLevelWidgets() if isinstance(w, AddCandidateDialog))
+        d.results.setCurrentRow(1)
+        d.editor.stars[2].click()
+        QTimer.singleShot(
+            AUTOSAVE_MS * 3,
+            lambda: (seen.update(on_disk=LibraryAnnotations(root).get("packA/click.wav").rating), d.reject()),
+        )
+
+    QTimer.singleShot(50, drive)
+    assert Dialogs().add_candidate(None, load(EXAMPLE), AudioLibrary(root), root, FakePlayer(), hub) is None
+    assert seen["on_disk"] == 3

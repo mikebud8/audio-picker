@@ -143,6 +143,7 @@ class AddCandidateDialog(QDialog):
         editor_scroll.setWidgetResizable(True)
         editor_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         editor_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        editor_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Tab from Why reaches the stars, not the viewport
         editor_scroll.setWidget(self.editor)
         self.notes_hint = QLabel("Notes are saved to the library even if you cancel.")
         self.notes_hint.setWordWrap(True)
@@ -196,6 +197,10 @@ class AddCandidateDialog(QDialog):
         if not rel:
             self._set_chosen(None, f"Not under the audio root: {name}")
             return
+        # A stale highlight would claim a different file than the one now in the editor.
+        self.results.blockSignals(True)
+        self.results.setCurrentItem(None)
+        self.results.blockSignals(False)
         self._set_chosen(rel)
 
     def result_value(self) -> AddCandidateResult | None:
@@ -356,12 +361,13 @@ class Dialogs:
             return dialog.result_value() if accepted else None
         finally:
             player.stop()  # a preview never outlives the dialog
+            dialog.deleteLater()  # otherwise every invocation leaves an editor parented to the window
 
     def edit_slot(self, parent, review: Review, slot: Slot | None) -> SlotEdit | None:
         dialog = SlotEditorDialog(review, slot, parent)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            return dialog.result_value()
-        return None
+        result = dialog.result_value() if dialog.exec() == QDialog.DialogCode.Accepted else None
+        dialog.deleteLater()
+        return result
 
     def shortcuts(self, parent: QWidget | None) -> None:
         ShortcutsDialog(parent).exec()
