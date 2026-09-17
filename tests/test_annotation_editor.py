@@ -264,23 +264,32 @@ def test_a_long_pack_folder_does_not_swallow_the_file_name(qtbot, editor):
 
 
 def test_the_chip_area_keeps_its_wrapped_height(qtbot, editor, store):
-    editor.set_path("packA/click.wav")
-    assert editor.chips_container.minimumHeight() > 0
-
+    editor.set_path("packA/click.wav")  # the chip area is already visible, with one chip
     for i in range(12):
         store.add_tag("packB/hit.mp3", f"tag-{i}")
     editor.set_path("packB/hit.mp3")
-    # Tall enough that the box layout isn't squeezing every widget below its natural size;
-    # otherwise the container's actual height can undershoot heightForWidth() (Qt's deficit
-    # distribution during a squeeze doesn't re-run height-for-width on the final column width).
-    editor.resize(280, 450)
+    QApplication.processEvents()  # queued child shows and the LayoutRequest land
+    wrapped = editor.chips_layout.heightForWidth(editor.chips_container.width())
+    assert wrapped > editor.chips[0].sizeHint().height(), "the chips really wrap"
+    assert editor.chips_container.minimumHeight() == wrapped
+    editor.resize(280, 300)  # shorter than the content; the minimum must win
     QApplication.processEvents()
-    assert editor.chips_container.height() == editor.chips_layout.heightForWidth(editor.chips_container.width())
+    assert editor.chips_container.height() == wrapped
     for chip in editor.chips:
         assert editor.chips_container.rect().contains(chip.geometry())
-
     editor.set_path(None)
     assert editor.chips_container.minimumHeight() == 0
+
+
+def test_committing_a_tag_that_wraps_keeps_the_chip_area_open(qtbot, editor, store):
+    for i in range(4):
+        store.add_tag("packB/hit.mp3", f"tag-{i}")
+    editor.set_path("packB/hit.mp3")
+    QApplication.processEvents()
+    qtbot.keyClicks(editor.tag_input, "a-rather-long-tag-name,")
+    QApplication.processEvents()
+    wrapped = editor.chips_layout.heightForWidth(editor.chips_container.width())
+    assert editor.chips_container.minimumHeight() == wrapped
 
 
 def test_completer_matches_anywhere_case_insensitively(editor):

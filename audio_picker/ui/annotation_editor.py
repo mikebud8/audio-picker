@@ -306,6 +306,7 @@ class AnnotationEditor(QWidget):
             chip = TagChip(tag)
             chip.removed.connect(self._remove_tag)
             self.chips_layout.addWidget(chip)
+            chip.show()  # addWidget defers the child's show to the event loop; a hidden widget measures 0x0
             self.chips.append(chip)
         self.chips_container.setVisible(bool(tags))
         self._fit_chips()
