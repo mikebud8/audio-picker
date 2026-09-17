@@ -371,13 +371,13 @@ class MainWindow(QMainWindow):
 
     def _open_library_window(self) -> None:
         """Show the library viewer, built once and kept: it shares this window's hub and player."""
+        self.player.stop()  # spec 5.3: the review window stops playback before showing the viewer
+        self._playing_cid = None
         if self.library_window is not None:
             self.library_window.show()
             self.library_window.raise_()
             self.library_window.activateWindow()
             return
-        self.player.stop()
-        self._playing_cid = None
         lw = LibraryWindow(
             self.root,
             self.library,
@@ -404,6 +404,10 @@ class MainWindow(QMainWindow):
             lw = self.library_window
             self.library_window = None
             lw.close()
+            # Free it: a retired viewer would go on rebuilding its rows against the old root
+            # every time the hub reports an edit. Every slot it holds is a bound method or a
+            # QObject slot, so Qt drops them all with the object.
+            lw.deleteLater()
 
     def _on_viewer_play(self) -> None:
         self._playing_cid = None
@@ -742,7 +746,6 @@ class MainWindow(QMainWindow):
     def _open_other(self) -> None:
         if not self.settle_unsaved("open another review"):
             return
-        self._close_library_window()  # it is bound to this root, library and store
         target = self.dialogs.open_review_path(self, self.review_path.parent)
         if target is None:
             return
@@ -753,6 +756,7 @@ class MainWindow(QMainWindow):
         except ReviewError as e:
             self.dialogs.error(self, "Cannot open review", str(e))
             return
+        self._close_library_window()  # only now: it is bound to the root, library and store we leave
         self.review_path = target
         self.root = root
         self.review = review

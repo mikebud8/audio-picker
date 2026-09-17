@@ -5,7 +5,8 @@ import shutil
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QObject, QSettings, Qt, Signal
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QSettings, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
 from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
@@ -899,12 +900,50 @@ def test_viewer_playback_clears_the_review_highlight(qtbot, win):
     press(qtbot, win, Qt.Key.Key_1)
     win.actions["library"].trigger()
     lw = win.library_window
-    press(qtbot, win, Qt.Key.Key_1)  # the review plays again while the viewer is open
+    qtbot.keyClick(win.tree.view, Qt.Key.Key_1)  # the review plays again while the viewer is open
     assert win.panel.rows[0].is_playing
     lw.list.setCurrentRow(3)
     lw.list.itemDoubleClicked.emit(lw.list.item(3))
     assert not win.panel.rows[0].is_playing
     assert win.transport.now_playing.text() == "Nothing playing"
+    # The shared player going on playing the viewer's file must not light the row again.
+    win.player.state_changed.emit(PlayerState.STOPPED)
+    win.player.state_changed.emit(PlayerState.PLAYING)
+    assert not win.panel.rows[0].is_playing
+
+
+def test_reshowing_the_viewer_stops_review_playback(qtbot, win):
+    win.actions["library"].trigger()
+    lw = win.library_window
+    lw.close()
+    qtbot.keyClick(win.tree.view, Qt.Key.Key_1)
+    n = len(win.player.calls)
+    win.actions["library"].trigger()
+    assert win.library_window is lw and lw.isVisible()
+    assert ("stop",) in win.player.calls[n:]
+
+
+def test_open_other_frees_the_retired_viewer(qtbot, make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    old = w.library_window
+    other_review, _other_root = _other_review(tmp_path)
+    w.dialogs.open_target = other_review
+    w.actions["open"].trigger()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not shiboken6.isValid(old)
+    # Nothing the review window still emits may reach the freed viewer.
+    w.transport.loop.setChecked(True)
+    w.hub.store.set_rating("packA/click.wav", 2)
+    w.hub.notify_changed("packA/click.wav")
+
+
+def test_cancelling_the_open_dialog_keeps_the_viewer(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    w.dialogs.open_target = None  # the user cancelled the file dialog
+    w.actions["open"].trigger()
+    assert w.library_window is not None and w.library_window.isVisible()
 
 
 def test_viewer_and_review_transport_bars_stay_in_sync(qtbot, win):

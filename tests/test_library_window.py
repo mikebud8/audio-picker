@@ -301,6 +301,14 @@ def test_unowned_hub_neither_reports_nor_stops_the_player(qtbot, make_lw, root):
     assert not any(c == ("stop",) for c in w.player.calls)
 
 
+def test_closing_while_playing_stops_a_borrowed_player(make_lw, root):
+    w = make_lw(owns_hub=False, hub=AnnotationHub(LibraryAnnotations(root)))
+    w.list.setCurrentRow(1)
+    w.list.itemDoubleClicked.emit(w.list.item(1))
+    assert w.close()
+    assert ("stop",) in w.player.calls  # our audio must not outlive the window
+
+
 def test_player_signals_after_the_viewer_is_deleted_do_not_raise(make_lw):
     """A shared player outlives this window, so every slot on it must be a bound method."""
     player = FakePlayer()

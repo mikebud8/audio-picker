@@ -420,7 +420,7 @@ class LibraryWindow(QMainWindow):
                         return
             finally:
                 self._settling = False
-        if self.owns_player:
-            self.player.stop()
+        if self.owns_player or self._playing_rel is not None:
+            self.player.stop()  # never leave our own audio playing on a player we merely borrow
         self.settings.setValue("library_window/geometry", self.saveGeometry())
         event.accept()
