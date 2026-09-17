@@ -13,6 +13,7 @@ from audio_picker.model import load
 from audio_picker.player import PlayerState
 from audio_picker.ui.annotation_hub import AnnotationHub
 from audio_picker.ui.main_window import MainWindow
+from audio_picker.ui.path_delegate import SUMMARY_ROLE
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "review.json"
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "audio"
@@ -868,3 +869,90 @@ def test_add_candidate_edits_autosave_while_open_even_when_cancelled(qtbot, make
     w.actions["add_candidate"].trigger()
     assert [c.id for c in w.review.slot("ui_click").candidates] == ["A001", "A002"]
     assert w.hub.store.has_tag("packA/confirm.ogg", "warm")
+
+
+# -- library viewer from the review window --------------------------------------------
+
+
+def test_library_viewer_opens_once_shares_hub_and_player_and_stops_review_playback(qtbot, win):
+    press(qtbot, win, Qt.Key.Key_1)
+    n = len(win.player.calls)
+    win.actions["library"].trigger()
+    lw = win.library_window
+    assert lw.isVisible()
+    assert lw.player is win.player
+    assert lw.hub is win.hub
+    assert ("stop",) in win.player.calls[n:]  # the viewer's transport bar also logs set_loop after it
+    assert not lw.owns_hub and not lw.owns_player
+    win.actions["library"].trigger()
+    assert win.library_window is lw
+    assert [a.text() for a in win.menuBar().actions()[0].menu().actions() if a.text()][:5] == [
+        "&Open…",
+        "&Save now",
+        "&Export manifest…",
+        "&Rescan library",
+        "&Library viewer…",
+    ]
+
+
+def test_viewer_playback_clears_the_review_highlight(qtbot, win):
+    press(qtbot, win, Qt.Key.Key_1)
+    win.actions["library"].trigger()
+    lw = win.library_window
+    press(qtbot, win, Qt.Key.Key_1)  # the review plays again while the viewer is open
+    assert win.panel.rows[0].is_playing
+    lw.list.setCurrentRow(3)
+    lw.list.itemDoubleClicked.emit(lw.list.item(3))
+    assert not win.panel.rows[0].is_playing
+    assert win.transport.now_playing.text() == "Nothing playing"
+
+
+def test_viewer_and_review_transport_bars_stay_in_sync(qtbot, win):
+    win.actions["library"].trigger()
+    lw = win.library_window
+    lw.transport.loop.setChecked(True)
+    assert win.transport.loop.isChecked()
+    assert win.player.loop is True
+    assert win.settings.value("transport/loop", type=bool) is True
+    win.transport.volume.setValue(35)
+    assert lw.transport.volume.value() == 35
+    assert abs(win.player.volume - 0.35) < 1e-6
+
+
+def test_viewer_and_dock_stay_in_sync_through_the_hub(qtbot, make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    w.actions["library"].trigger()
+    lw = w.library_window
+    lw.list.setCurrentRow(1)  # packA/click.wav, also the dock's file
+    lw.editor.stars[3].click()
+    assert [s.text() for s in w.notes_editor.stars] == ["★", "★", "★", "★", "☆"]
+    qtbot.waitUntil(lambda: LibraryAnnotations(tmp_root).get("packA/click.wav").rating == 4, timeout=3000)
+    w.notes_editor.stars[0].click()
+    assert lw.list.item(1).data(SUMMARY_ROLE) == "★1"
+
+
+def test_rescan_in_the_review_window_refreshes_an_open_viewer(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    lw = w.library_window
+    (tmp_root / "packA" / "new.wav").write_bytes(b"")
+    w.actions["rescan"].trigger()
+    assert "packA/new.wav" in [lw.list.item(i).text() for i in range(lw.list.count())]
+
+
+def test_open_other_review_closes_the_viewer(make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    other_review, _other_root = _other_review(tmp_path)
+    w.dialogs.open_target = other_review
+    w.actions["open"].trigger()
+    assert w.library_window is None
+
+
+def test_quit_closes_the_viewer(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    lw = w.library_window
+    assert w.close()
+    assert not lw.isVisible()

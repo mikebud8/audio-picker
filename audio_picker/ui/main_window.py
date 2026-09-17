@@ -23,6 +23,7 @@ from .annotation_editor import AnnotationEditor
 from .annotation_hub import AnnotationHub
 from .dialogs import Dialogs
 from .keys import text_field_focused
+from .library_window import LibraryWindow
 from .slot_panel import SlotPanel
 from .slot_tree import SlotTree
 from .theme import error_css
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
         self._settling = False
         self._current_slot: str | None = None
         self._playing_cid: str | None = None
+        self.library_window: LibraryWindow | None = None
         self._missing_slots: set[str] = set()
         self._missing_cids: set[str] = set()
         self.report: CheckReport = CheckReport()
@@ -188,6 +190,7 @@ class MainWindow(QMainWindow):
         self._action("save", "&Save now", "Ctrl+S", self.flush)
         self._action("export", "&Export manifest…", None, self._export)
         self._action("rescan", "&Rescan library", None, self._rescan)
+        self._action("library", "&Library viewer…", None, self._open_library_window)
         self._action("quit", "&Quit", "Ctrl+Q", self.close)
         self._action("add_slot", "&Add slot…", "Ctrl+N", self._add_slot)
         self._action("edit_slot", "&Edit slot…", "Ctrl+E", self._edit_slot)
@@ -215,7 +218,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         bar = self.menuBar()
         file_menu = bar.addMenu("&File")
-        for key in ("open", "save", "export", "rescan"):
+        for key in ("open", "save", "export", "rescan", "library"):
             file_menu.addAction(self.actions[key])
         file_menu.addSeparator()
         file_menu.addAction(self.actions["quit"])
@@ -365,6 +368,47 @@ class MainWindow(QMainWindow):
         self._report_annotations_load()
         self.notes_editor.set_store(self.hub.store)
         self._on_active_changed(self.panel.active_candidate_id())
+
+    def _open_library_window(self) -> None:
+        """Show the library viewer, built once and kept: it shares this window's hub and player."""
+        if self.library_window is not None:
+            self.library_window.show()
+            self.library_window.raise_()
+            self.library_window.activateWindow()
+            return
+        self.player.stop()
+        self._playing_cid = None
+        lw = LibraryWindow(
+            self.root,
+            self.library,
+            self.hub,
+            self.player,
+            self.settings,
+            owns_hub=False,
+            owns_player=False,
+            dialogs=self.dialogs,
+            parent=self,
+        )
+        # Two transport bars, one player: loop and volume have no player signal to follow, so
+        # mirror them both ways. Both signals only fire on a real change, so this cannot loop.
+        lw.transport.loop.toggled.connect(self.transport.loop.setChecked)
+        self.transport.loop.toggled.connect(lw.transport.loop.setChecked)
+        lw.transport.volume.valueChanged.connect(self.transport.volume.setValue)
+        self.transport.volume.valueChanged.connect(lw.transport.volume.setValue)
+        lw.play_requested.connect(self._on_viewer_play)
+        self.library_window = lw
+        lw.show()
+
+    def _close_library_window(self) -> None:
+        if self.library_window is not None:
+            lw = self.library_window
+            self.library_window = None
+            lw.close()
+
+    def _on_viewer_play(self) -> None:
+        self._playing_cid = None
+        self.panel.set_playing(None)
+        self.transport.set_now_playing(None, None)
 
     def _on_annotations_save_failed(self, message: str) -> None:
         if self._settling:
@@ -698,6 +742,7 @@ class MainWindow(QMainWindow):
     def _open_other(self) -> None:
         if not self.settle_unsaved("open another review"):
             return
+        self._close_library_window()  # it is bound to this root, library and store
         target = self.dialogs.open_review_path(self, self.review_path.parent)
         if target is None:
             return
@@ -724,6 +769,7 @@ class MainWindow(QMainWindow):
         if not self.settle_unsaved("quit"):
             event.ignore()
             return
+        self._close_library_window()
         self.player.stop()
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/state", self.saveState())
