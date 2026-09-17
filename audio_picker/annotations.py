@@ -54,7 +54,7 @@ def _check_tag(raw: Any, where: str) -> str:
     try:
         normalised = normalise_tag(raw)
     except ValueError:
-        normalised = ""
+        raise AnnotationsError(f"{where}: tag {raw!r} is empty") from None
     if normalised != raw:
         raise AnnotationsError(f"{where}: tag {raw!r} is not normalised (expected {normalised!r})")
     return raw
@@ -70,14 +70,12 @@ def _check_rating(raw: Any, where: str) -> int | None:
     if raw is None:
         return None
     if isinstance(raw, bool) or not isinstance(raw, int) or raw not in RATINGS:
-        raise AnnotationsError(f"{where}: rating must be an integer from 1 to 5")
+        raise AnnotationsError(f"{where}: rating must be an integer from 1 to 5, got {raw!r}")
     return raw
 
 
 def _key_is_canonical(key: str) -> bool:
     if "\\" in key:
-        return False
-    if key.strip() != key:
         return False
     parts = key.split("/")
     if any(p == "" for p in parts):

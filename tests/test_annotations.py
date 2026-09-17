@@ -87,6 +87,7 @@ def test_vocabulary_is_union_of_listed_and_used_tags(tmp_path):
         ("not json", "invalid JSON"),
         ([], "expected an object"),
         ({"version": 2, "tags": [], "files": {}}, "version"),
+        ({"tags": [], "files": {}}, "version"),
         ({"version": 1, "tags": [], "files": {}, "extra": 1}, "unknown key"),
         ({"version": 1, "tags": "x", "files": {}}, "tags must be a list"),
         ({"version": 1, "tags": ["Bad Tag"], "files": {}}, "not normalised"),
@@ -104,8 +105,9 @@ def test_vocabulary_is_union_of_listed_and_used_tags(tmp_path):
         ({"version": 1, "tags": [], "files": {"a.wav": {"note": 3}}}, "note must be a string"),
         ({"version": 1, "tags": [], "files": {"a\\b.wav": {}}}, "canonical"),
         ({"version": 1, "tags": [], "files": {"packA//x.wav": {}}}, "canonical"),
-        ({"version": 1, "tags": [], "files": {" a.wav": {}}}, "canonical"),
         ({"version": 1, "tags": [], "files": {"packA/": {}}}, "canonical"),
+        ({"version": 1, "tags": [""], "files": {}}, "empty"),
+        ({"version": 1, "tags": [], "files": {"a.wav": {"tags": ["  "]}}}, "empty"),
     ],
 )
 def test_malformed_sidecar_is_reported_and_store_is_read_only(tmp_path, data, fragment):
@@ -121,7 +123,19 @@ def test_malformed_sidecar_is_reported_and_store_is_read_only(tmp_path, data, fr
 
 def test_not_utf8_is_reported(tmp_path):
     (tmp_path / SIDECAR_NAME).write_bytes(b"\xff\xfe{}")
-    assert "UTF-8" in LibraryAnnotations(tmp_path).load_error
+    error = LibraryAnnotations(tmp_path).load_error
+    assert error is not None and "UTF-8" in error
+
+
+def test_load_tolerates_null_rating_duplicate_tags_and_empty_entries(tmp_path):
+    write_sidecar(
+        tmp_path,
+        {"version": 1, "tags": [], "files": {"a.wav": {"rating": None, "tags": ["ui", "ui"]}, "b.wav": {}}},
+    )
+    store = LibraryAnnotations(tmp_path)
+    assert store.get("a.wav") == Annotation(rating=None, tags=["ui"], note="")
+    assert store.annotated() == ["a.wav"]
+    assert store.vocabulary() == ["ui"]
 
 
 def test_reload_recovers_after_the_file_is_fixed(tmp_path):
