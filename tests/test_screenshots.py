@@ -18,6 +18,7 @@ from audio_picker.library import AudioLibrary
 from audio_picker.model import load
 from audio_picker.ui.annotation_hub import AnnotationHub
 from audio_picker.ui.dialogs import AddCandidateDialog, ShortcutsDialog, SlotEditorDialog
+from audio_picker.ui.library_window import LibraryWindow
 from audio_picker.ui.main_window import MainWindow
 from audio_picker.ui.theme import contrast_ratio, dim_color, error_color
 from tests.test_ui_smoke import FakeDialogs, FakePlayer
@@ -101,6 +102,10 @@ def window(qtbot, tmp_path, theme):
 def test_main_window_screenshots(qtbot, window, theme):
     qtbot.keyClick(window.tree.view, Qt.Key.Key_2)  # a playing row and an active border
     _save(window, f"main_{theme}")
+    window.notes_dock.show()
+    window.notes_editor.tag_input.setFocus()
+    _save(window, f"main_dock_{theme}")
+    window.notes_dock.hide()
     window.tree.select_slot("horn_distant")
     _save(window, f"main_gap_{theme}")
     window.tree.status_filter.setCurrentText("Missing files")
@@ -145,6 +150,34 @@ def test_dialog_screenshots(qtbot, theme):
     keys.show()
     qtbot.waitExposed(keys)
     _save(keys, f"dialog_shortcuts_{theme}")
+
+
+def test_library_window_screenshot(qtbot, tmp_path, theme):
+    root = tmp_path / "audio"
+    shutil.copytree(FIXTURE_ROOT, root)
+    store = LibraryAnnotations(root)
+    store.add_tag("packA/click.wav", "ui")
+    store.add_tag("packA/click.wav", "click")
+    store.set_rating("packA/click.wav", 4)
+    store.set_note("packA/click.wav", "Clean and short. Pair with confirm for release.")
+    store.add_tag("packZ/gone.wav", "orphan")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    w = LibraryWindow(
+        root,
+        AudioLibrary(root),
+        AnnotationHub(store),
+        FakePlayer(),
+        settings,
+        owns_hub=True,
+        owns_player=True,
+        dialogs=FakeDialogs(),
+    )
+    w.resize(1100, 640)
+    qtbot.addWidget(w)
+    w.show()
+    qtbot.waitExposed(w)
+    w.list.setCurrentRow(1)
+    _save(w, f"library_{theme}")
 
 
 @pytest.mark.parametrize("palette", [QPalette(), dark_palette()], ids=["light", "dark"])
