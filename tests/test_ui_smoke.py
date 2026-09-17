@@ -501,6 +501,7 @@ def test_panel_emits_active_changed_on_slot_change_play_and_empty_slot(qtbot, wi
     assert len(seen) == n
     win.tree.select_slot("horn_distant")
     assert seen[-1] is None
+    assert seen == ["A003", "A001", "A002", None]
 
 
 def test_space_plays_first_candidate_when_nothing_loaded(qtbot, win):
