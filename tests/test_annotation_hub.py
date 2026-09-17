@@ -57,6 +57,10 @@ def test_reload_reads_the_disk_when_clean(qtbot, hub, tmp_path):
     assert hub.store.get("b.wav").rating == 2
 
 
+def test_reload_says_so_when_there_is_no_sidecar(hub):
+    assert hub.reload() == "no library notes file"
+
+
 def test_reload_reports_a_still_broken_file(hub, tmp_path):
     (tmp_path / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
     assert hub.reload() == "library notes not loaded"

@@ -482,6 +482,45 @@ def test_quit_after_cancelled_save_asks_and_can_be_cancelled(qtbot, win, review_
     assert win.close()
 
 
+def _review_errors(w) -> int:
+    return sum(1 for c in w.dialogs.calls if c[0] == "error" and "review.json" in c[1])
+
+
+def test_review_save_failure_during_quit_shows_only_the_unsaved_dialog(monkeypatch, qtbot, win, review_file):
+    def _fail(review, path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("audio_picker.ui.main_window.save", _fail)
+    win.tree.select_slot("ui_confirm")
+    press(qtbot, win, Qt.Key.Key_Y)
+    win.dialogs.unsaved_answer = "cancel"
+    before = _review_errors(win)
+    assert not win.close()
+    assert win.dialogs.calls.count(("unsaved", "quit", ("review.json",))) == 1
+    assert _review_errors(win) == before, "settling shows the unsaved dialog only, not a second error box"
+    win.dialogs.unsaved_answer = "discard"
+    assert win.close()
+
+
+def test_quit_retry_after_conflict_can_overwrite(qtbot, win, review_file):
+    _rewrite_on_disk(review_file, "edited-elsewhere")
+    win.tree.select_slot("ui_confirm")
+    press(qtbot, win, Qt.Key.Key_Y)
+
+    def unsaved(parent, action, files):
+        first = not any(c[0] == "unsaved" for c in win.dialogs.calls)
+        win.dialogs.calls.append(("unsaved", action, tuple(files)))
+        if not first:
+            return "cancel"
+        win.dialogs.conflict_answer = "overwrite"
+        return "retry"
+
+    win.dialogs.unsaved = unsaved
+    assert win.close()
+    assert disk(review_file).slot("ui_confirm").candidate("A003").decision == "yay"
+    assert [c for c in win.dialogs.calls if c[0] == "unsaved"] == [("unsaved", "quit", ("review.json",))]
+
+
 # -- transport -------------------------------------------------------------------
 
 
@@ -649,6 +688,17 @@ def test_open_other_review_flushes_and_switches_the_store(make_win, tmp_root, tm
     assert LibraryAnnotations(tmp_root).has_tag("packA/click.wav", "first")
     assert w.hub.store.path == other_root / SIDECAR_NAME
     assert not w.hub.store.has_tag("packA/click.wav", "first")
+
+
+def test_open_other_discard_with_unsaved_sidecar_switches_store(make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    _break_sidecar_saves(w, tmp_root)
+    w.dialogs.unsaved_answer = "discard"
+    other_review, other_root = _other_review(tmp_path)
+    w.dialogs.open_target = other_review
+    w.actions["open"].trigger()
+    assert w.hub.store.path == other_root / SIDECAR_NAME
+    assert not w.hub.store.dirty
 
 
 def test_malformed_sidecar_is_reported_once_and_the_store_is_read_only(make_win, tmp_root):

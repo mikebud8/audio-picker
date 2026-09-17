@@ -42,6 +42,9 @@ class AnnotationHub(QObject):
         """Rescan hook: re-read the sidecar unless dirty; always emit `reloaded`. Returns a status fragment."""
         if self.store.dirty:
             text = "library notes not reloaded (unsaved edits)"
+        elif not self.store.path.exists():
+            self.store.reload()  # nothing to read: this only clears a store left over from a deleted file
+            text = "no library notes file"
         else:
             try:
                 self.store.reload()

@@ -366,7 +366,8 @@ class MainWindow(QMainWindow):
                 save(self.review, self.review_path)
             except OSError as e:
                 self._save_timer.stop()
-                self.dialogs.error(self, "Save failed", f"Could not write {self.review_path}:\n{e}")
+                if not self._settling:  # settling names the file and offers a retry: one modal is enough
+                    self.dialogs.error(self, "Save failed", f"Could not write {self.review_path}:\n{e}")
                 return False
             self._fingerprint = _fingerprint(self.review_path)
             self._dirty = False
