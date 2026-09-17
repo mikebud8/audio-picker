@@ -87,6 +87,7 @@ def test_browse_clears_the_stale_result_highlight(monkeypatch, dialog, root):
     dialog._browse()
     assert dialog.editor.path == "packB/hit.mp3"
     assert dialog.results.currentItem() is None
+    assert dialog.results.selectedItems() == []
 
 
 def test_autosave_fires_inside_the_modal_loop(qtbot, root):
@@ -103,5 +104,9 @@ def test_autosave_fires_inside_the_modal_loop(qtbot, root):
         )
 
     QTimer.singleShot(50, drive)
+    # Hang guard: if the drive above never runs, this reject keeps the modal loop from stalling the suite.
+    QTimer.singleShot(
+        5000, lambda: [w.reject() for w in QApplication.topLevelWidgets() if isinstance(w, AddCandidateDialog)]
+    )
     assert Dialogs().add_candidate(None, load(EXAMPLE), AudioLibrary(root), root, FakePlayer(), hub) is None
     assert seen["on_disk"] == 3
