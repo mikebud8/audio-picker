@@ -7,6 +7,7 @@ section 3). One store per audio root per process. Imports nothing from Qt.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -199,3 +200,92 @@ class LibraryAnnotations:
 
     def annotated(self) -> list[str]:
         return sorted(self._files)
+
+    # -- mutating -----------------------------------------------------------------
+
+    def _entry(self, rel: str) -> Annotation:
+        return self._files.setdefault(rel, Annotation())
+
+    def _settle(self, rel: str) -> None:
+        """Drop an entry that has nothing left, then mark dirty."""
+        a = self._files.get(rel)
+        if a is not None and a.is_empty():
+            del self._files[rel]
+        self.dirty = True
+
+    def set_rating(self, rel: str, rating: int | None) -> None:
+        if rating is not None and (isinstance(rating, bool) or rating not in RATINGS):
+            raise ValueError(f"rating must be 1 to 5 or None, got {rating!r}")
+        if self.get(rel).rating == rating:
+            return
+        self._entry(rel).rating = rating
+        self._settle(rel)
+
+    def add_tag(self, rel: str, tag: str) -> str:
+        """Normalise, add if absent, grow the vocabulary. Returns the normalised tag."""
+        tag = normalise_tag(tag)
+        entry = self._files.get(rel)
+        if entry is not None and tag in entry.tags:
+            return tag
+        entry = self._entry(rel)
+        entry.tags = sorted(entry.tags + [tag])
+        self._vocabulary.add(tag)
+        self._settle(rel)
+        return tag
+
+    def remove_tag(self, rel: str, tag: str) -> None:
+        tag = normalise_tag(tag)
+        entry = self._files.get(rel)
+        if entry is None or tag not in entry.tags:
+            return
+        entry.tags.remove(tag)
+        self._settle(rel)
+
+    def set_note(self, rel: str, note: str) -> None:
+        if self.get(rel).note == note:
+            return
+        self._entry(rel).note = note
+        self._settle(rel)
+
+    # -- filters ------------------------------------------------------------------
+
+    def files_with(self, tag: str) -> list[str]:
+        tag = normalise_tag(tag)
+        return sorted(k for k, a in self._files.items() if tag in a.tags)
+
+    def min_rating(self, n: int) -> list[str]:
+        return sorted(k for k, a in self._files.items() if a.rating is not None and a.rating >= n)
+
+    # -- writing ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        files: dict[str, dict] = {}
+        for key in sorted(self._files):
+            a = self._files[key]
+            entry: dict = {}
+            if a.rating is not None:
+                entry["rating"] = a.rating
+            if a.tags:
+                entry["tags"] = list(a.tags)
+            if a.note:
+                entry["note"] = a.note
+            files[key] = entry
+        return {"version": ANNOTATIONS_VERSION, "tags": self.vocabulary(), "files": files}
+
+    def dumps(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n"
+
+    def save(self) -> None:
+        """Atomic write through `<file>.tmp`. A no-op while `read_only`. Raises OSError."""
+        if self.read_only:
+            return
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        data = self.dumps().encode("utf-8")
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, self.path)
+        finally:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+        self.dirty = False

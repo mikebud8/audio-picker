@@ -147,3 +147,142 @@ def test_reload_recovers_after_the_file_is_fixed(tmp_path):
     assert not store.read_only
     assert store.load_error is None
     assert store.annotated() == ["packA/click.wav", "packZ/gone.wav"]
+
+
+# -- mutators ------------------------------------------------------------------------
+
+
+def test_set_rating_marks_dirty_and_validates(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    store.set_rating("a.wav", 3)
+    assert store.dirty
+    assert store.get("a.wav").rating == 3
+    store.set_rating("a.wav", None)
+    assert store.get("a.wav").rating is None
+    for bad in (0, 6, True, "4"):
+        with pytest.raises(ValueError):
+            store.set_rating("a.wav", bad)
+
+
+def test_add_tag_normalises_sorts_and_grows_vocabulary(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    assert store.add_tag("a.wav", " UI ") == "ui"
+    assert store.add_tag("a.wav", "Click") == "click"
+    assert store.get("a.wav").tags == ["click", "ui"]
+    assert store.vocabulary() == ["click", "ui"]
+    assert store.dirty
+
+
+def test_add_duplicate_tag_is_a_no_op(root):
+    store = LibraryAnnotations(root)
+    assert store.add_tag("packA/click.wav", "ui") == "ui"
+    assert store.get("packA/click.wav").tags == ["click", "ui"]
+    assert not store.dirty
+
+
+def test_add_empty_tag_raises(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    with pytest.raises(ValueError):
+        store.add_tag("a.wav", "  ")
+    assert not store.dirty
+
+
+def test_remove_tag_keeps_the_vocabulary(root):
+    store = LibraryAnnotations(root)
+    store.remove_tag("packZ/gone.wav", "orphan")
+    assert not store.has("packZ/gone.wav"), "an entry with nothing left is dropped"
+    assert "orphan" in store.vocabulary()
+    assert store.dirty
+
+
+def test_remove_unknown_tag_is_a_no_op(root):
+    store = LibraryAnnotations(root)
+    store.remove_tag("packA/click.wav", "nope")
+    store.remove_tag("nope.wav", "ui")
+    assert not store.dirty
+
+
+def test_set_note_and_clearing_everything_drops_the_entry(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    store.set_note("a.wav", "hello")
+    assert store.get("a.wav").note == "hello"
+    assert store.annotated() == ["a.wav"]
+    store.set_note("a.wav", "")
+    assert store.annotated() == []
+
+
+def test_set_note_to_same_text_is_a_no_op(root):
+    store = LibraryAnnotations(root)
+    store.set_note("packA/click.wav", "Clean and short.")
+    store.set_note("other.wav", "")
+    assert not store.dirty
+
+
+# -- filters ---------------------------------------------------------------------------
+
+
+def test_files_with_and_min_rating(root):
+    store = LibraryAnnotations(root)
+    store.set_rating("packB/hit.mp3", 2)
+    store.add_tag("packB/hit.mp3", "ui")
+    assert store.files_with("UI") == ["packA/click.wav", "packB/hit.mp3"]
+    assert store.files_with("orphan") == ["packZ/gone.wav"]
+    assert store.files_with("nope") == []
+    assert store.min_rating(1) == ["packA/click.wav", "packB/hit.mp3"]
+    assert store.min_rating(3) == ["packA/click.wav"]
+    assert store.min_rating(5) == []
+
+
+# -- saving --------------------------------------------------------------------------
+
+
+def test_round_trip_is_byte_identical(root):
+    store = LibraryAnnotations(root)
+    store.dirty = True
+    store.save()
+    assert (root / SIDECAR_NAME).read_bytes() == FIXTURE.read_bytes()
+    assert not store.dirty
+    assert not (root / (SIDECAR_NAME + ".tmp")).exists()
+
+
+def test_save_writes_sorted_keys_lf_and_omits_empty_fields(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    store.add_tag("z.wav", "b")
+    store.set_rating("a.wav", 5)
+    store.set_note("m.wav", "line1\nline2")
+    store.save()
+    raw = (tmp_path / SIDECAR_NAME).read_bytes()
+    assert b"\r\n" not in raw and raw.endswith(b"}\n")
+    data = json.loads(raw)
+    assert list(data) == ["version", "tags", "files"]
+    assert list(data["files"]) == ["a.wav", "m.wav", "z.wav"]
+    assert data["files"]["a.wav"] == {"rating": 5}
+    assert data["files"]["m.wav"] == {"note": "line1\nline2"}
+    assert data["files"]["z.wav"] == {"tags": ["b"]}
+    assert data["tags"] == ["b"]
+
+
+def test_save_is_a_no_op_when_read_only(tmp_path):
+    p = write_sidecar(tmp_path, {"version": 9})
+    store = LibraryAnnotations(tmp_path)
+    store.set_rating("a.wav", 1)
+    store.save()
+    assert json.loads(p.read_text(encoding="utf-8")) == {"version": 9}
+    assert store.dirty
+
+
+def test_save_failure_raises_oserror_and_keeps_dirty(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    store.set_rating("a.wav", 1)
+    (tmp_path / SIDECAR_NAME).mkdir()  # a directory in the way
+    with pytest.raises(OSError):
+        store.save()
+    assert store.dirty
+
+
+def test_reload_picks_up_a_disk_change(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    write_sidecar(tmp_path, {"version": 1, "tags": [], "files": {"n.wav": {"rating": 2}}})
+    assert not store.has("n.wav")
+    store.reload()
+    assert store.get("n.wav").rating == 2
