@@ -10,18 +10,7 @@ from typing import Callable
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import (
-    QAbstractSpinBox,
-    QApplication,
-    QComboBox,
-    QLineEdit,
-    QMainWindow,
-    QPlainTextEdit,
-    QSplitter,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QMainWindow, QSplitter, QVBoxLayout, QWidget
 
 from ..check import CheckReport, check_review
 from ..export import build_manifest
@@ -30,6 +19,7 @@ from ..model import Candidate, Review, ReviewError, Slot, load, save
 from ..paths import resolve_root, to_absolute
 from ..player import PlayerState
 from .dialogs import Dialogs
+from .keys import text_field_focused
 from .slot_panel import SlotPanel
 from .slot_tree import SlotTree
 from .transport_bar import TransportBar
@@ -211,10 +201,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _text_focused() -> bool:
-        w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QPlainTextEdit, QTextEdit, QAbstractSpinBox)):
-            return True
-        return isinstance(w, QComboBox) and w.isEditable()
+        return text_field_focused()
 
     def _slot(self) -> Slot | None:
         return self.review.slot(self._current_slot) if self._current_slot else None

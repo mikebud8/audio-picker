@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QPalette, QRegularExpressionValidator, QTextDocument
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -21,9 +21,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QStyle,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -31,6 +28,7 @@ from PySide6.QtWidgets import (
 from ..library import AudioLibrary
 from ..model import ID_RE, PRIORITIES, ROLES, Review, Slot
 from ..paths import to_absolute, to_relative
+from .path_delegate import PATH_ROLE, PathDelegate
 from .theme import error_css
 
 SHORTCUTS = [
@@ -67,41 +65,6 @@ class SlotEdit:
     notes: str
 
 
-class _PathDelegate(QStyledItemDelegate):
-    """Draws a relative path with its first component (the pack folder) in bold."""
-
-    @staticmethod
-    def _html(rel: str, color: str) -> str:
-        folder, sep, rest = rel.partition("/")
-        body = f"<b>{folder}</b>/{rest}" if sep else rel
-        return f'<span style="color: {color}">{body}</span>'
-
-    def _document(self, option: QStyleOptionViewItem, index, selected: bool = False) -> QTextDocument:
-        role = QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text
-        doc = QTextDocument()
-        doc.setDefaultFont(option.font)
-        doc.setDocumentMargin(2)
-        rel = index.data(Qt.ItemDataRole.UserRole) or index.data() or ""
-        doc.setHtml(self._html(rel, option.palette.color(role).name()))
-        return doc
-
-    def paint(self, painter, option: QStyleOptionViewItem, index) -> None:
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        opt.text = ""
-        style = opt.widget.style() if opt.widget else QStyle()
-        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
-        doc = self._document(opt, index, selected=bool(opt.state & QStyle.StateFlag.State_Selected))
-        painter.save()
-        painter.translate(opt.rect.left(), opt.rect.top() + (opt.rect.height() - doc.size().height()) / 2)
-        doc.drawContents(painter)
-        painter.restore()
-
-    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
-        doc = self._document(option, index)
-        return QSize(int(doc.idealWidth()), int(doc.size().height()))
-
-
 class AddCandidateDialog(QDialog):
     def __init__(self, review: Review, library: AudioLibrary, root: Path, player, parent=None) -> None:
         super().__init__(parent)
@@ -120,7 +83,7 @@ class AddCandidateDialog(QDialog):
         layout.addWidget(self.search)
 
         self.results = QListWidget()
-        self.results.setItemDelegate(_PathDelegate(self.results))
+        self.results.setItemDelegate(PathDelegate(self.results))
         self.results.currentItemChanged.connect(self._on_current_result)
         self.results.itemDoubleClicked.connect(lambda _i: self._preview())
         layout.addWidget(self.results, 1)
@@ -164,12 +127,12 @@ class AddCandidateDialog(QDialog):
             folder = AudioLibrary.pack_folder(rel)
             pack = next((p.name for p in self._review.packs.values() if p.folder == folder), None)
             item.setToolTip(f"Pack: {pack}" if pack else "No pack matches this folder")
-            item.setData(Qt.ItemDataRole.UserRole, rel)
+            item.setData(PATH_ROLE, rel)
             self.results.addItem(item)
 
     def _on_current_result(self, current: QListWidgetItem | None, _previous) -> None:
         if current is not None:
-            self._set_chosen(current.data(Qt.ItemDataRole.UserRole))
+            self._set_chosen(current.data(PATH_ROLE))
 
     def _set_chosen(self, rel: str | None, note: str = "") -> None:
         self._chosen = rel
