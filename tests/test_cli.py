@@ -283,7 +283,11 @@ def test_library_subcommand_launches_the_viewer(library_gui):
 
 
 def test_library_relative_root_is_made_absolute(library_gui):
-    assert cli.main(["library", "--root", os.path.relpath(FIXTURE_ROOT)]) == 0
+    try:
+        rel = os.path.relpath(FIXTURE_ROOT)
+    except ValueError:
+        pytest.skip("fixture root is on another drive")
+    assert cli.main(["library", "--root", rel]) == 0
     assert library_gui == [FIXTURE_ROOT]
 
 

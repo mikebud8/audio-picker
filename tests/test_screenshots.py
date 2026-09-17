@@ -86,12 +86,28 @@ def _save(widget, name: str) -> Path:
     return out
 
 
+def _annotated_root(tmp_path: Path) -> Path:
+    """A writable copy of the fixture root with two files annotated, for the proof images."""
+    root = tmp_path / "audio"
+    shutil.copytree(FIXTURE_ROOT, root)
+    store = LibraryAnnotations(root)
+    store.set_rating("packA/confirm.ogg", 4)
+    for tag in ("ui", "click", "warm"):
+        store.add_tag("packA/confirm.ogg", tag)
+    store.set_note("packA/confirm.ogg", "Warmer than click.wav.\nKeep for confirmations and releases.")
+    for tag in ("ui", "short"):
+        store.add_tag("packA/click.wav", tag)
+    store.save()  # the widgets open their own store on this root
+    return root
+
+
 @pytest.fixture
 def window(qtbot, tmp_path, theme):
     review_file = tmp_path / "review.json"
     shutil.copy(EXAMPLE, review_file)
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    w = MainWindow(review_file, FIXTURE_ROOT, player=FakePlayer(), dialogs=FakeDialogs(), settings=settings)
+    root = _annotated_root(tmp_path)
+    w = MainWindow(review_file, root, player=FakePlayer(), dialogs=FakeDialogs(), settings=settings)
     w.resize(1280, 800)
     qtbot.addWidget(w)
     w.show()
@@ -126,15 +142,14 @@ def test_missing_files_screenshot(qtbot, tmp_path, theme):
     _save(w, f"main_missing_files_{theme}")
 
 
-def test_dialog_screenshots(qtbot, theme):
+def test_dialog_screenshots(qtbot, tmp_path, theme):
     review = load(EXAMPLE)
-    add = AddCandidateDialog(
-        review, AudioLibrary(FIXTURE_ROOT), FIXTURE_ROOT, FakePlayer(), AnnotationHub(LibraryAnnotations(FIXTURE_ROOT))
-    )
+    root = _annotated_root(tmp_path)
+    add = AddCandidateDialog(review, AudioLibrary(root), root, FakePlayer(), AnnotationHub(LibraryAnnotations(root)))
     qtbot.addWidget(add)
     add.show()
     qtbot.waitExposed(add)
-    add.results.setCurrentRow(1)
+    add.results.setCurrentRow(2)  # packA/confirm.ogg: rated, tagged and noted
     _save(add, f"dialog_add_candidate_{theme}")
 
     edit = SlotEditorDialog(review, review.slot("ui_click"))
@@ -160,6 +175,8 @@ def test_library_window_screenshot(qtbot, tmp_path, theme):
     store.add_tag("packA/click.wav", "click")
     store.set_rating("packA/click.wav", 4)
     store.set_note("packA/click.wav", "Clean and short. Pair with confirm for release.")
+    store.set_rating("packB/hit.mp3", 2)  # an unselected row with a dimmed summary
+    store.add_tag("packB/hit.mp3", "hit")
     store.add_tag("packZ/gone.wav", "orphan")
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     w = LibraryWindow(
@@ -187,3 +204,5 @@ def test_theme_colours_keep_contrast(qapp, palette):
     for background in (window, base):
         assert contrast_ratio(dim_color(palette), background) >= MIN_CONTRAST
         assert contrast_ratio(error_color(palette), background) >= MIN_CONTRAST
+    chip_text = palette.color(QPalette.ColorRole.WindowText)
+    assert contrast_ratio(chip_text, palette.color(QPalette.ColorRole.AlternateBase)) >= MIN_CONTRAST
