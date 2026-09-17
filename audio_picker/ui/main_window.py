@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         if slot is None:
             return
         self.player.stop()
-        result = self.dialogs.add_candidate(self, self.review, self.library, self.root, self.player)
+        result = self.dialogs.add_candidate(self, self.review, self.library, self.root, self.player, self.hub)
         self.player.stop()
         if result is None:
             return

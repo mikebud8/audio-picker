@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -28,8 +29,10 @@ from PySide6.QtWidgets import (
 from ..library import AudioLibrary
 from ..model import ID_RE, PRIORITIES, ROLES, Review, Slot
 from ..paths import to_absolute, to_relative
+from .annotation_editor import AnnotationEditor
+from .annotation_hub import AnnotationHub
 from .path_delegate import PATH_ROLE, PathDelegate
-from .theme import error_css
+from .theme import dim_css, error_css
 
 SHORTCUTS = [
     ("1 – 9", "Play candidate N; the key of the playing candidate stops it"),
@@ -66,19 +69,35 @@ class SlotEdit:
 
 
 class AddCandidateDialog(QDialog):
-    def __init__(self, review: Review, library: AudioLibrary, root: Path, player, parent=None) -> None:
+    def __init__(
+        self,
+        review: Review,
+        library: AudioLibrary,
+        root: Path,
+        player,
+        hub: AnnotationHub,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add candidate")
-        self.resize(640, 480)
+        self.resize(920, 480)
         self._review = review
         self._library = library
         self._root = root
         self._player = player
+        self.hub = hub
         self._chosen: str | None = None
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        columns = QHBoxLayout()
+        outer.addLayout(columns, 1)
+        left = QWidget()
+        layout = QVBoxLayout(left)
+        layout.setContentsMargins(0, 0, 0, 0)
+        columns.addWidget(left, 1)
+
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search the audio library (every word must match)")
+        self.search.setPlaceholderText("Search the audio library (every word must match; #tag matches a tag)")
         self.search.textChanged.connect(self._refresh_results)
         layout.addWidget(self.search)
 
@@ -111,18 +130,40 @@ class AddCandidateDialog(QDialog):
         form.addRow("Why", self.why)
         layout.addLayout(form)
 
+        right = QWidget()
+        right.setFixedWidth(280)
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        self.editor = AnnotationEditor(hub.store)
+        self.editor.changed.connect(hub.notify_changed)
+        self.editor.escape_pressed.connect(self.search.setFocus)
+        # The editor's minimum height grows with its chip rows; the scroll area absorbs that
+        # instead of letting a long tag list push the dialog taller.
+        editor_scroll = QScrollArea()
+        editor_scroll.setWidgetResizable(True)
+        editor_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        editor_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        editor_scroll.setWidget(self.editor)
+        self.notes_hint = QLabel("Notes are saved to the library even if you cancel.")
+        self.notes_hint.setWordWrap(True)
+        self.notes_hint.setStyleSheet(dim_css())
+        self.notes_hint.setContentsMargins(8, 0, 8, 4)
+        right_layout.addWidget(editor_scroll, 1)
+        right_layout.addWidget(self.notes_hint)
+        columns.addWidget(right)
+
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
-        layout.addWidget(self.buttons)
+        outer.addWidget(self.buttons)
 
         self._refresh_results("")
         self.search.setFocus()
 
     def _refresh_results(self, query: str) -> None:
         self.results.clear()
-        for rel in self._library.search(query):
+        for rel in self._library.search(query, annotations=self.hub.store):
             item = QListWidgetItem(rel)
             folder = AudioLibrary.pack_folder(rel)
             pack = next((p.name for p in self._review.packs.values() if p.folder == folder), None)
@@ -139,6 +180,7 @@ class AddCandidateDialog(QDialog):
         self.chosen_label.setText(rel or note or "No file chosen")
         self.preview.setEnabled(rel is not None)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(rel is not None)
+        self.editor.set_path(rel)
 
     def _preview(self) -> None:
         if self._chosen:
@@ -306,9 +348,9 @@ class Dialogs:
         return Path(name) if name else None
 
     def add_candidate(
-        self, parent, review: Review, library: AudioLibrary, root: Path, player
+        self, parent, review: Review, library: AudioLibrary, root: Path, player, hub: AnnotationHub
     ) -> AddCandidateResult | None:
-        dialog = AddCandidateDialog(review, library, root, player, parent)
+        dialog = AddCandidateDialog(review, library, root, player, hub, parent)
         try:
             accepted = dialog.exec() == QDialog.DialogCode.Accepted
             return dialog.result_value() if accepted else None

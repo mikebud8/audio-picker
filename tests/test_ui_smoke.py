@@ -110,7 +110,7 @@ class FakeDialogs:
         self.calls.append(("open_review_path",))
         return self.open_target
 
-    def add_candidate(self, parent, review, library, root, player):
+    def add_candidate(self, parent, review, library, root, player, hub):
         self.calls.append(("add_candidate",))
         return None
 
@@ -791,7 +791,8 @@ def test_enter_in_the_dock_tag_field_adds_a_tag_and_tree_enter_still_selects(qtb
     assert w.hub.store.has_tag("packA/click.wav", "half")
     assert w.notes_editor.tag_input.text() == ""
     assert w.review.slot("ui_click").selected == "A001"  # unchanged
-    assert not w.windowTitle().startswith("•")  # the window's Return shortcut never ran: no re-select, no edit
+    assert not w.windowTitle().startswith("•")  # the review is untouched: no re-select, no edit
+    # The has_tag / empty-field pair above is what proves the key reached the field.
     w.tree.select_slot("ui_confirm")
     w.tree.view.setFocus()  # selecting a slot leaves focus in the dock; the user comes back to the tree
     press(qtbot, w, Qt.Key.Key_Return)
@@ -852,3 +853,18 @@ def test_dock_follows_a_reload_that_changes_the_path_of_the_same_id(qtbot, win, 
     win.dialogs.conflict_answer = "reload"
     press(qtbot, win, Qt.Key.Key_Y)
     qtbot.waitUntil(lambda: win.notes_editor.path == "packB/hit.mp3", timeout=3000)
+
+
+def test_add_candidate_edits_autosave_while_open_even_when_cancelled(qtbot, make_win, tmp_root):
+    w = make_win(tmp_root)
+
+    def fake_add(parent, review, library, root, player, hub):
+        hub.store.add_tag("packA/confirm.ogg", "warm")
+        hub.notify_changed("packA/confirm.ogg")
+        qtbot.waitUntil(lambda: LibraryAnnotations(tmp_root).has_tag("packA/confirm.ogg", "warm"), timeout=3000)
+        return None  # cancelled
+
+    w.dialogs.add_candidate = fake_add
+    w.actions["add_candidate"].trigger()
+    assert [c.id for c in w.review.slot("ui_click").candidates] == ["A001", "A002"]
+    assert w.hub.store.has_tag("packA/confirm.ogg", "warm")

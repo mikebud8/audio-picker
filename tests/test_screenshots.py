@@ -13,8 +13,10 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPalette
 from PySide6.QtWidgets import QApplication
 
+from audio_picker.annotations import LibraryAnnotations
 from audio_picker.library import AudioLibrary
 from audio_picker.model import load
+from audio_picker.ui.annotation_hub import AnnotationHub
 from audio_picker.ui.dialogs import AddCandidateDialog, ShortcutsDialog, SlotEditorDialog
 from audio_picker.ui.main_window import MainWindow
 from audio_picker.ui.theme import contrast_ratio, dim_color, error_color
@@ -121,7 +123,9 @@ def test_missing_files_screenshot(qtbot, tmp_path, theme):
 
 def test_dialog_screenshots(qtbot, theme):
     review = load(EXAMPLE)
-    add = AddCandidateDialog(review, AudioLibrary(FIXTURE_ROOT), FIXTURE_ROOT, FakePlayer())
+    add = AddCandidateDialog(
+        review, AudioLibrary(FIXTURE_ROOT), FIXTURE_ROOT, FakePlayer(), AnnotationHub(LibraryAnnotations(FIXTURE_ROOT))
+    )
     qtbot.addWidget(add)
     add.show()
     qtbot.waitExposed(add)
