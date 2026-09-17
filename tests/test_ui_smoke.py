@@ -729,3 +729,116 @@ def test_rescan_keeps_a_dirty_store_and_says_so(make_win, tmp_root):
     w.actions["rescan"].trigger()  # fires before the 500 ms autosave, so the store is still dirty
     assert w.hub.store.has_tag("packA/click.wav", "mine")
     assert "not reloaded" in w.statusBar().currentMessage()
+
+
+# -- library notes dock ------------------------------------------------------------------
+
+
+def test_dock_is_hidden_by_default_and_toggles_from_the_view_menu(win):
+    assert not win.notes_dock.isVisible()
+    win.notes_dock.toggleViewAction().trigger()
+    assert win.notes_dock.isVisible()
+    assert win.notes_dock.objectName() == "libraryNotesDock"
+    assert [a.text() for a in win.menuBar().actions()] == ["&File", "&Slot", "&Candidate", "&View", "&Help"]
+
+
+def test_dock_follows_the_active_candidate(qtbot, win):
+    win.notes_dock.show()
+    assert win.notes_editor.path == "packA/click.wav"
+    press(qtbot, win, Qt.Key.Key_2)
+    assert win.notes_editor.path == "packA/confirm.ogg"
+    win.tree.select_slot("battle_hit")
+    assert win.notes_editor.path == "packB/hit.mp3"
+    win.tree.select_slot("horn_distant")
+    assert win.notes_editor.path is None
+
+
+def test_dock_edit_goes_through_the_hub_and_autosaves(qtbot, make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    with qtbot.waitSignal(w.hub.changed):
+        w.notes_editor.stars[4].click()
+    assert w.hub.store.get("packA/click.wav").rating == 5
+    qtbot.waitUntil(lambda: (tmp_root / SIDECAR_NAME).exists(), timeout=3000)
+
+
+def test_dock_reflects_a_change_made_elsewhere(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    w.hub.store.set_rating("packA/click.wav", 3)
+    w.hub.notify_changed("packA/click.wav")
+    assert [s.text() for s in w.notes_editor.stars] == ["★", "★", "★", "☆", "☆"]
+
+
+def test_typing_y_in_the_dock_note_does_not_mark_a_decision(qtbot, make_win, tmp_root):
+    # tmp_root, not the shared fixture: the note dirties the store and closing the window writes it out.
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    w.notes_editor.note.setFocus()
+    qtbot.keyClicks(w.notes_editor.note, "yn1")
+    assert w.review.slot("ui_click").candidate("A002").decision == "unreviewed"
+    assert not any(c[0] == "play" for c in w.player.calls)
+    assert w.hub.store.get("packA/click.wav").note == "yn1"
+
+
+def test_escape_in_the_dock_clears_the_tag_field_and_returns_to_the_tree(qtbot, win):
+    win.notes_dock.show()
+    win.notes_editor.tag_input.setFocus()
+    qtbot.keyClicks(win.notes_editor.tag_input, "half")
+    qtbot.keyClick(win.notes_editor.tag_input, Qt.Key.Key_Escape)
+    assert win.notes_editor.tag_input.text() == ""
+    assert win.tree.view.hasFocus()
+
+
+def test_dock_state_is_saved_and_restored(qtbot, tmp_path, review_file):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    w = MainWindow(review_file, FIXTURE_ROOT, player=FakePlayer(), dialogs=FakeDialogs(), settings=settings)
+    qtbot.addWidget(w)
+    w.show()
+    qtbot.waitExposed(w)
+    w.notes_dock.show()
+    assert w.close()
+    w2 = MainWindow(review_file, FIXTURE_ROOT, player=FakePlayer(), dialogs=FakeDialogs(), settings=settings)
+    qtbot.addWidget(w2)
+    w2.show()
+    qtbot.waitExposed(w2)
+    assert w2.notes_dock.isVisible()
+
+
+def test_dock_is_disabled_while_the_sidecar_is_malformed_and_recovers_on_rescan(make_win, tmp_root):
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    assert w.notes_editor.path == "packA/click.wav"
+    assert not w.notes_editor.note.isEnabled()
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 1, "tags": [], "files": {}}', encoding="utf-8")
+    w.actions["rescan"].trigger()
+    assert w.notes_editor.path == "packA/click.wav"
+    assert w.notes_editor.note.isEnabled()
+    assert not w.annotations_warning.isVisible()
+
+
+def test_open_other_review_repoints_the_dock(make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    other_review, other_root = _other_review(tmp_path)
+    w.dialogs.open_target = other_review
+    w.actions["open"].trigger()
+    assert w.notes_editor.path == "packA/click.wav"
+    w.notes_editor.stars[0].click()
+    assert w.hub.store.path == other_root / SIDECAR_NAME
+    assert w.hub.store.get("packA/click.wav").rating == 1
+
+
+def _rewrite_candidate_path_on_disk(review_file: Path, path: str) -> None:
+    data = json.loads(review_file.read_text(encoding="utf-8"))
+    data["slots"][0]["candidates"][0]["path"] = path
+    review_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def test_dock_follows_a_reload_that_changes_the_path_of_the_same_id(qtbot, win, review_file):
+    win.notes_dock.show()
+    _rewrite_candidate_path_on_disk(review_file, "packB/hit.mp3")
+    win.dialogs.conflict_answer = "reload"
+    press(qtbot, win, Qt.Key.Key_Y)
+    qtbot.waitUntil(lambda: win.notes_editor.path == "packB/hit.mp3", timeout=3000)

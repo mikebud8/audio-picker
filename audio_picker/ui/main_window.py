@@ -10,7 +10,7 @@ from typing import Callable
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDockWidget, QLabel, QMainWindow, QScrollArea, QSplitter, QVBoxLayout, QWidget
 
 from ..annotations import LibraryAnnotations
 from ..check import CheckReport, check_review
@@ -19,6 +19,7 @@ from ..library import AudioLibrary
 from ..model import Candidate, Review, ReviewError, Slot, load, save
 from ..paths import resolve_root, to_absolute
 from ..player import PlayerState
+from .annotation_editor import AnnotationEditor
 from .annotation_hub import AnnotationHub
 from .dialogs import Dialogs
 from .keys import text_field_focused
@@ -87,6 +88,9 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
         else:
             self.resize(1200, 760)
+        state = self.settings.value("window/state")
+        if state is not None:
+            self.restoreState(state)
         self.settings.setValue("last_file", str(self.review_path))
 
         self._run_check()
@@ -121,6 +125,24 @@ class MainWindow(QMainWindow):
         self.annotations_warning.hide()
         self.statusBar().addPermanentWidget(self.annotations_warning)
 
+        self.notes_editor = AnnotationEditor(self.hub.store)
+        self.notes_editor.changed.connect(self.hub.notify_changed)
+        self.notes_editor.escape_pressed.connect(self.tree.view.setFocus)  # only fires when the dock floats
+        # The editor's minimum height grows with its chip rows, so a scroll area absorbs it
+        # instead of letting the dock put a floor under the whole window.
+        notes_scroll = QScrollArea()
+        notes_scroll.setWidgetResizable(True)
+        notes_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        notes_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        notes_scroll.setMinimumWidth(240)
+        notes_scroll.setWidget(self.notes_editor)
+        self.notes_dock = QDockWidget("Library notes", self)
+        self.notes_dock.setObjectName("libraryNotesDock")
+        self.notes_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.notes_dock.setWidget(notes_scroll)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.notes_dock)
+        self.notes_dock.hide()
+
         self.tree.current_slot_changed.connect(self._on_current_slot)
         self.panel.play_clicked.connect(self._toggle_candidate)
         self.panel.decision_clicked.connect(self._toggle_decision)
@@ -132,6 +154,8 @@ class MainWindow(QMainWindow):
         self.panel.add_candidate_clicked.connect(self._add_candidate)
         self.transport.play_pause_clicked.connect(self._space)
         self.transport.stop_clicked.connect(self.player.stop)
+        self.panel.active_changed.connect(self._on_active_changed)
+        self.hub.changed.connect(self._on_annotation_changed)
 
     def _action(
         self,
@@ -201,6 +225,8 @@ class MainWindow(QMainWindow):
         cand_menu = bar.addMenu("&Candidate")
         for key in ("add_candidate", "remove_candidate"):
             cand_menu.addAction(self.actions[key])
+        view_menu = bar.addMenu("&View")
+        view_menu.addAction(self.notes_dock.toggleViewAction())
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.actions["shortcuts"])
 
@@ -251,11 +277,17 @@ class MainWindow(QMainWindow):
         self.panel.show_slot(slot, self.review, self._missing_cids)
         self.transport.set_now_playing(None, None)
 
+    def _on_active_changed(self, cid) -> None:
+        slot = self._slot()
+        candidate = slot.candidate(cid) if slot is not None and cid else None
+        self.notes_editor.set_path(candidate.path if candidate is not None else None)
+
     def _focus_search(self) -> None:
         self.tree.search.setFocus()
         self.tree.search.selectAll()
 
     def _escape(self) -> None:
+        self.notes_editor.escape()
         self.tree.view.setFocus()
 
     # -- mutations -----------------------------------------------------------------
@@ -322,8 +354,14 @@ class MainWindow(QMainWindow):
         )
         self.annotations_warning.setVisible(store.read_only)
 
+    def _on_annotation_changed(self, rel: str) -> None:
+        if self.notes_editor.path == rel:
+            self.notes_editor.refresh()
+
     def _on_annotations_reloaded(self) -> None:
         self._report_annotations_load()
+        self.notes_editor.set_store(self.hub.store)
+        self._on_active_changed(self.panel.active_candidate_id())
 
     def _on_annotations_save_failed(self, message: str) -> None:
         if self._settling:
@@ -403,6 +441,8 @@ class MainWindow(QMainWindow):
         if keep and self.tree.current_slot_id() == keep:
             self._on_current_slot(keep)
         self._update_title()
+        # A reload can keep the candidate id and change its path, which emits nothing.
+        self._on_active_changed(self.panel.active_candidate_id())
 
     # -- playback -------------------------------------------------------------------
 
@@ -683,4 +723,5 @@ class MainWindow(QMainWindow):
             return
         self.player.stop()
         self.settings.setValue("window/geometry", self.saveGeometry())
+        self.settings.setValue("window/state", self.saveState())
         event.accept()
