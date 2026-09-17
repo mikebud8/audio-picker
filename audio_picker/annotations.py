@@ -144,7 +144,10 @@ def _parse(path: Path) -> tuple[dict[str, Annotation], set[str]]:
 
 
 class LibraryAnnotations:
-    """Annotations for one audio root. Mutators mark `dirty`; the host decides when to `save()`."""
+    """Annotations for one audio root. Mutators mark `dirty`; the host decides when to `save()`.
+
+    Mutators raise AnnotationsError while `read_only`, so a malformed sidecar can never be overwritten.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
@@ -203,6 +206,10 @@ class LibraryAnnotations:
 
     # -- mutating -----------------------------------------------------------------
 
+    def _check_writable(self) -> None:
+        if self.read_only:
+            raise AnnotationsError(f"library notes are read-only: {self.load_error}")
+
     def _entry(self, rel: str) -> Annotation:
         return self._files.setdefault(rel, Annotation())
 
@@ -214,7 +221,8 @@ class LibraryAnnotations:
         self.dirty = True
 
     def set_rating(self, rel: str, rating: int | None) -> None:
-        if rating is not None and (isinstance(rating, bool) or rating not in RATINGS):
+        self._check_writable()
+        if rating is not None and (isinstance(rating, bool) or not isinstance(rating, int) or rating not in RATINGS):
             raise ValueError(f"rating must be 1 to 5 or None, got {rating!r}")
         if self.get(rel).rating == rating:
             return
@@ -223,6 +231,7 @@ class LibraryAnnotations:
 
     def add_tag(self, rel: str, tag: str) -> str:
         """Normalise, add if absent, grow the vocabulary. Returns the normalised tag."""
+        self._check_writable()
         tag = normalise_tag(tag)
         entry = self._files.get(rel)
         if entry is not None and tag in entry.tags:
@@ -234,6 +243,7 @@ class LibraryAnnotations:
         return tag
 
     def remove_tag(self, rel: str, tag: str) -> None:
+        self._check_writable()
         tag = normalise_tag(tag)
         entry = self._files.get(rel)
         if entry is None or tag not in entry.tags:
@@ -242,6 +252,9 @@ class LibraryAnnotations:
         self._settle(rel)
 
     def set_note(self, rel: str, note: str) -> None:
+        self._check_writable()
+        if not isinstance(note, str):
+            raise ValueError(f"note must be a string, got {type(note).__name__}")
         if self.get(rel).note == note:
             return
         self._entry(rel).note = note

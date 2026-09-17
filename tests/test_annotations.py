@@ -159,7 +159,7 @@ def test_set_rating_marks_dirty_and_validates(tmp_path):
     assert store.get("a.wav").rating == 3
     store.set_rating("a.wav", None)
     assert store.get("a.wav").rating is None
-    for bad in (0, 6, True, "4"):
+    for bad in (0, 6, True, "4", 4.0):
         with pytest.raises(ValueError):
             store.set_rating("a.wav", bad)
 
@@ -218,6 +218,20 @@ def test_set_note_to_same_text_is_a_no_op(root):
     assert not store.dirty
 
 
+def test_set_note_rejects_non_strings(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    with pytest.raises(ValueError):
+        store.set_note("a.wav", 3)
+    assert not store.dirty
+
+
+def test_clearing_a_rating_on_an_unknown_path_is_a_no_op(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    store.set_rating("nope.wav", None)
+    assert not store.dirty
+    assert store.annotated() == []
+
+
 # -- filters ---------------------------------------------------------------------------
 
 
@@ -238,7 +252,7 @@ def test_files_with_and_min_rating(root):
 
 def test_round_trip_is_byte_identical(root):
     store = LibraryAnnotations(root)
-    store.dirty = True
+    store.dirty = True  # save is unconditional; this proves it clears the flag
     store.save()
     assert (root / SIDECAR_NAME).read_bytes() == FIXTURE.read_bytes()
     assert not store.dirty
@@ -265,10 +279,11 @@ def test_save_writes_sorted_keys_lf_and_omits_empty_fields(tmp_path):
 def test_save_is_a_no_op_when_read_only(tmp_path):
     p = write_sidecar(tmp_path, {"version": 9})
     store = LibraryAnnotations(tmp_path)
-    store.set_rating("a.wav", 1)
+    with pytest.raises(AnnotationsError):
+        store.set_rating("a.wav", 1)
     store.save()
     assert json.loads(p.read_text(encoding="utf-8")) == {"version": 9}
-    assert store.dirty
+    assert not store.dirty
 
 
 def test_save_failure_raises_oserror_and_keeps_dirty(tmp_path):
@@ -278,6 +293,7 @@ def test_save_failure_raises_oserror_and_keeps_dirty(tmp_path):
     with pytest.raises(OSError):
         store.save()
     assert store.dirty
+    assert not (tmp_path / (SIDECAR_NAME + ".tmp")).exists()
 
 
 def test_reload_picks_up_a_disk_change(tmp_path):
@@ -286,3 +302,14 @@ def test_reload_picks_up_a_disk_change(tmp_path):
     assert not store.has("n.wav")
     store.reload()
     assert store.get("n.wav").rating == 2
+
+
+def test_empty_store_saves_and_reloads_clean(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    store.set_rating("a.wav", 1)
+    store.set_rating("a.wav", None)
+    store.save()
+    again = LibraryAnnotations(tmp_path)
+    assert again.annotated() == []
+    assert again.vocabulary() == []
+    assert not again.read_only
