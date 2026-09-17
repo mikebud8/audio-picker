@@ -1,0 +1,1324 @@
+{
+  "version": 1,
+  "project": "one-more-turn",
+  "root": "../../one-more-turn/vendor/audio",
+  "categories": [
+    "Music",
+    "UI",
+    "Movement",
+    "Battle",
+    "Outcomes",
+    "Resources",
+    "Loop",
+    "World tells",
+    "Ambience",
+    "Unfilled"
+  ],
+  "packs": {
+    "epic_asian": {
+      "name": "Epic Asian",
+      "folder": "epicasianaudiobundle",
+      "license": "Paid; Tao & Sound EULA.txt and purchase invoice"
+    },
+    "eastern_music": {
+      "name": "Eastern Music",
+      "folder": "easternmusicpack",
+      "license": "Paid; bundled Ovani royalty-free license link"
+    },
+    "kenney_ui": {
+      "name": "Kenney UI",
+      "folder": "kenney-ui-audio",
+      "license": "CC0; bundled License.txt"
+    },
+    "inventory_sfx": {
+      "name": "Inventory SFX",
+      "folder": "inventorysfx",
+      "license": "Paid; bundled GameDev Market Read Me"
+    },
+    "kenney_rpg": {
+      "name": "Kenney RPG",
+      "folder": "kenney-rpg-audio",
+      "license": "CC0; bundled License.txt"
+    },
+    "pack_100_cc0": {
+      "name": "100 CC0",
+      "folder": "100-CC0-SFX",
+      "license": "CC0 pack; bundled credits.txt identifies source"
+    },
+    "nature": {
+      "name": "Nature",
+      "folder": "nature_sounds_pack",
+      "license": "CC0 per shopping list; bundled credits.txt identifies source"
+    },
+    "creature_cc0": {
+      "name": "Creature CC0",
+      "folder": "80-CC0-creature-SFX",
+      "license": "CC0 pack; bundled credits.txt identifies source"
+    }
+  },
+  "slots": [
+    {
+      "id": "title_theme",
+      "category": "Music",
+      "function": "Main menu and Settings",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A001",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/04.1 War Dance (action - cinematic) JAP.wav",
+          "pack": "epic_asian",
+          "role": "reference",
+          "why": "Previously selected menu identity. Keep as the reference for this review.",
+          "listen_for": "Comfort at menu volume and whole-track loop seam.",
+          "proposed_use": "Loop; existing menu gain -10 dB",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "exploration_loop",
+      "category": "Music",
+      "function": "Quiet overworld planning and travel",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A002",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/01.2 Spirit (travel - cinematic) JAP.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Japanese travel/cinematic label directly matches overworld exploration.",
+          "listen_for": "Can it stay interesting without tiring during long decisions?",
+          "proposed_use": "Loop; quiet background; confirm seamless edit",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A003",
+          "path": "easternmusicpack/Eastern Music Pack/Koto (RT 5.387)/Eastern Koto Intensity 1.wav",
+          "pack": "eastern_music",
+          "role": "alternative",
+          "why": "Koto-led title and lower-intensity variant are worth comparing for a restrained board mood.",
+          "listen_for": "Instrumentation, intensity and repeat fatigue; title alone does not establish mood.",
+          "proposed_use": "Loop after seam review; choose instead of A002",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "village_music",
+      "category": "Music",
+      "function": "Village and safe-site atmosphere",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A004",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/05.2 Through Nippon (village - travel) JAP.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Explicit village/travel version offers contrast to hunted-state music.",
+          "listen_for": "Warmth without sounding like a separate game.",
+          "proposed_use": "Optional contextual loop; avoid restarting for every card",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "tension_loop",
+      "category": "Music",
+      "function": "Detected or hunted state",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A005",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/02.3 Bushido (duel - tense) JAP.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Tense duel designation suits sustained danger.",
+          "listen_for": "Tension without constant climax or distracting percussion.",
+          "proposed_use": "Loop while danger state persists; transitions later",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A006",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/03.2 Samurai Riders (tense - duel) JAP.wav",
+          "pack": "epic_asian",
+          "role": "alternative",
+          "why": "Second explicitly tense Japanese candidate.",
+          "listen_for": "Compare with Bushido for the less fatiguing loop.",
+          "proposed_use": "Choose one danger loop initially",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "battle_music",
+      "category": "Music",
+      "function": "Extended battle-card decision",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A007",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/02.2 Bushido (battle - action) JAP.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Battle/action label fits a larger confrontation.",
+          "listen_for": "Does a full track overwhelm a short card interaction?",
+          "proposed_use": "Only if encounter stays open long enough; otherwise use the draw cue",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "victory_music",
+      "category": "Music",
+      "function": "Successful campaign summary",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A008",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/01.3 Spirit (epic - cinematic) JAP.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Epic variant could provide a larger conclusion to the exploration theme.",
+          "listen_for": "Does it resolve triumphantly? Not confirmed by listening.",
+          "proposed_use": "Summary background or selected ending excerpt; not an 8-second ready-made sting",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "defeat_music",
+      "category": "Music",
+      "function": "Campaign loss summary",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A009",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Music/JAP/06.2 Ronin (arcade - story) JAP.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Story variant is a candidate for reflective loss; mood is unconfirmed.",
+          "listen_for": "Reject if upbeat or arcade-like rather than reflective.",
+          "proposed_use": "Only after mood audition; fade as summary background",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ui_click",
+      "category": "UI",
+      "function": "Ordinary button press",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A010",
+          "path": "kenney-ui-audio/Audio/click1.ogg",
+          "pack": "kenney_ui",
+          "role": "first",
+          "why": "Dedicated click keeps ordinary actions unobtrusive.",
+          "listen_for": "Short and comfortable after 30 repeated clicks.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A011",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Misc/Button01.wav",
+          "pack": "epic_asian",
+          "role": "alternative",
+          "why": "In-pack button offers a comparison against the neutral Kenney sound.",
+          "listen_for": "Does it fit the paper/tabletop aesthetic?",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ui_hover",
+      "category": "UI",
+      "function": "Keyboard focus or pointer enters a control",
+      "priority": "optional",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A012",
+          "path": "kenney-ui-audio/Audio/rollover1.ogg",
+          "pack": "kenney_ui",
+          "role": "first",
+          "why": "Dedicated rollover cue for optional navigation feedback.",
+          "listen_for": "Barely audible; reject if busy when crossing many cards.",
+          "proposed_use": "Optional and quiet; once per focus change",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ui_confirm",
+      "category": "UI",
+      "function": "Accept a choice or save Settings with Done",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A013",
+          "path": "kenney-ui-audio/Audio/switch2.ogg",
+          "pack": "kenney_ui",
+          "role": "first",
+          "why": "Switch family can distinguish commitment from a plain click.",
+          "listen_for": "Must feel decisive and differ from deny.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ui_deny",
+      "category": "UI",
+      "function": "Blocked movement or invalid choice",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A014",
+          "path": "kenney-ui-audio/Audio/switch3.ogg",
+          "pack": "kenney_ui",
+          "role": "first",
+          "why": "Separate switch candidate for rejection; actual pitch/mood needs audition.",
+          "listen_for": "Choose the duller/lower response; swap if it sounds affirmative.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "panel_open",
+      "category": "UI",
+      "function": "Open event card or journal",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A015",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Books & Scrolls/ScrollOpen1.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Literal scroll handling fits the written-card presentation.",
+          "listen_for": "Paper texture rather than a long theatrical flourish.",
+          "proposed_use": "Short one-shot; MP3 needs start-padding check when converted",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A016",
+          "path": "kenney-rpg-audio/Audio/bookOpen.ogg",
+          "pack": "kenney_rpg",
+          "role": "alternative",
+          "why": "CC0 paper alternative already suggested in the shopping list.",
+          "listen_for": "Compare with scroll for the cleaner onset.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "panel_close",
+      "category": "UI",
+      "function": "Close event card or journal",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A017",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Books & Scrolls/ScrollClose1.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Matched scroll close complements the opening choice.",
+          "listen_for": "Keep shorter/quieter than opening.",
+          "proposed_use": "One-shot; pair with approved opening family",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A018",
+          "path": "kenney-rpg-audio/Audio/bookClose.ogg",
+          "pack": "kenney_rpg",
+          "role": "alternative",
+          "why": "Matching close if the Kenney opening wins.",
+          "listen_for": "Consistent material with bookOpen.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "page_turn",
+      "category": "UI",
+      "function": "Journal tab change or next report page",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A019",
+          "path": "kenney-rpg-audio/Audio/bookFlip1.ogg",
+          "pack": "kenney_rpg",
+          "role": "first",
+          "why": "Page flip expresses browsing without a generic beep.",
+          "listen_for": "Soft transient; no conspicuous binding creak.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A020",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Books & Scrolls/TurnPage1.mp3",
+          "pack": "inventory_sfx",
+          "role": "alternative",
+          "why": "Dedicated page sample offers another paper texture.",
+          "listen_for": "Compare crispness with bookFlip1.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "card_place",
+      "category": "UI",
+      "function": "Site action card settles on table",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A021",
+          "path": "kenney-rpg-audio/Audio/bookPlace1.ogg",
+          "pack": "kenney_rpg",
+          "role": "first",
+          "why": "Small physical placement reinforces the tabletop.",
+          "listen_for": "Should feel card-sized, not like dropping a heavy book.",
+          "proposed_use": "Once when dealt/settled; never on hover animation",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "turn_advance",
+      "category": "UI",
+      "function": "End Turn is accepted",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A022",
+          "path": "100-CC0-SFX/wooden_01.ogg",
+          "pack": "pack_100_cc0",
+          "role": "first",
+          "why": "Wooden impact can give the main verb a tactile stamp.",
+          "listen_for": "Weightier than confirm without sounding like damage.",
+          "proposed_use": "Once per accepted End Turn; avoid extra confirm/click layering",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A023",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Misc/KanjiCaligraphy01.wav",
+          "pack": "epic_asian",
+          "role": "alternative",
+          "why": "Calligraphy sound could express committing the next written turn.",
+          "listen_for": "Is the stroke brief and final enough?",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "march_grass",
+      "category": "Movement",
+      "function": "Move one hex onto grass or forest",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A024",
+          "path": "nature_sounds_pack/Footstep/FootstepGrass01.wav",
+          "pack": "nature",
+          "role": "first",
+          "why": "Named grass recording directly matches soft terrain.",
+          "listen_for": "One compact step; check how it repeats.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A025",
+          "path": "nature_sounds_pack/Footstep/FootstepGrass03.wav",
+          "pack": "nature",
+          "role": "variation",
+          "why": "Second exact grass sample for natural repetition.",
+          "listen_for": "Similar level and material to Grass01.",
+          "proposed_use": "Approve independently; random pool only from approved variants",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "march_sand",
+      "category": "Movement",
+      "function": "Move one hex onto beach or sand",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A026",
+          "path": "kenney-rpg-audio/Audio/footstep00.ogg",
+          "pack": "kenney_rpg",
+          "role": "first",
+          "why": "Shopping-list fallback; terrain is not named in this pack.",
+          "listen_for": "Must sound soft/granular. Reject if hard-soled or stone-like.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "march_stone",
+      "category": "Movement",
+      "function": "Move one hex onto hard terrain",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A027",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Character/StepSamurai01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Character step candidate for the armoured party.",
+          "listen_for": "Ground material is unconfirmed; reject if unsuitable for stone.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A028",
+          "path": "kenney-rpg-audio/Audio/footstep04.ogg",
+          "pack": "kenney_rpg",
+          "role": "alternative",
+          "why": "Second footstep family to compare for a harder ground sound.",
+          "listen_for": "Choose by actual surface sound, not the number.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "march_sneak",
+      "category": "Movement",
+      "function": "Move one hex while sneaking",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A029",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Character/StepNinja01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Ninja step label offers a distinct stealth candidate.",
+          "listen_for": "Quieter than normal march without becoming inaudible.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "forest_rustle",
+      "category": "Movement",
+      "function": "Party moves through dense foliage",
+      "priority": "optional",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A030",
+          "path": "nature_sounds_pack/Foliage/Foliage01.wav",
+          "pack": "nature",
+          "role": "first",
+          "why": "Foliage texture can complement a forest step.",
+          "listen_for": "Avoid doubling the perceived number of steps.",
+          "proposed_use": "Occasional quiet layer; not every movement",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "encounter_open",
+      "category": "Battle",
+      "function": "Battle/encounter card opens",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A031",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Weapons/KatanaUnseathe01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Explicit katana draw is a strong thematic upgrade over generic panel opening.",
+          "listen_for": "Clean blade draw; brief enough to leave room for reading.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A032",
+          "path": "kenney-rpg-audio/Audio/drawKnife1.ogg",
+          "pack": "kenney_rpg",
+          "role": "alternative",
+          "why": "Smaller CC0 draw if katana is too dramatic.",
+          "listen_for": "Does it announce danger clearly without startling?",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "sword_clash",
+      "category": "Battle",
+      "function": "Fight resolves on encounter card",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A033",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Weapons/KatanaClash01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Direct sword collision instead of improvised generic metal.",
+          "listen_for": "Convincing metal impact without piercing treble.",
+          "proposed_use": "One resolution accent; do not imply a real-time combat sequence",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A034",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Weapons/KatanaClash03.wav",
+          "pack": "epic_asian",
+          "role": "variation",
+          "why": "Second clash for variation after approval.",
+          "listen_for": "Comparable loudness and weight.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "bow_release",
+      "category": "Battle",
+      "function": "Ranged or ambush resolution when supported",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A035",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Weapons/BowShot01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Actual bow shot fills the shopping-list gap.",
+          "listen_for": "String release and short flight; no modern firearm impression.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "bow_impact",
+      "category": "Battle",
+      "function": "Ranged impact on resolved hit",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A036",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Weapons/ImpactArrow01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Optional impact to follow an approved bow release.",
+          "listen_for": "Does it sound like the intended target material?",
+          "proposed_use": "Only on an actual resolved hit; no invented hit timing",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "battle_sting",
+      "category": "Battle",
+      "function": "Major encounter reveal",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A037",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Stingers/Stinger1.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Purpose-made stinger family is a better audition starting point than cutting a whole song.",
+          "listen_for": "Numbered file has no mood label: verify danger, length and ending.",
+          "proposed_use": "Tentative assignment; use instead of layering over every blade draw",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "victory_sting",
+      "category": "Outcomes",
+      "function": "Successful extraction or campaign win",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A038",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Stingers/Stinger10.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Candidate from dedicated stinger bank; mood unknown.",
+          "listen_for": "Must sound victorious; if not, mark Nay and describe mood.",
+          "proposed_use": "Tentative assignment; one-shot on result reveal",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "defeat_sting",
+      "category": "Outcomes",
+      "function": "Campaign lost or terminal defeat",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A039",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Stingers/Stinger16.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Candidate from dedicated stinger bank; mood unknown.",
+          "listen_for": "Must sound conclusive and sombre, not triumphant.",
+          "proposed_use": "Tentative assignment; one-shot on result reveal",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "event_chime_good",
+      "category": "Outcomes",
+      "function": "Positive event result or morale-band improvement",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A040",
+          "path": "100-CC0-SFX/bell_01.ogg",
+          "pack": "pack_100_cc0",
+          "role": "first",
+          "why": "Bell offers a compact positive outcome cue.",
+          "listen_for": "Warm, brief and distinct from the snap-back bell.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "event_chime_bad",
+      "category": "Outcomes",
+      "function": "Negative event result or morale-band decline",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A041",
+          "path": "100-CC0-SFX/gong_02.ogg",
+          "pack": "pack_100_cc0",
+          "role": "first",
+          "why": "Gong can suggest an omen rather than a harsh error buzzer.",
+          "listen_for": "Keep distinct from the clock and snap-back identities.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "coin",
+      "category": "Resources",
+      "function": "Bribe paid or loot received",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A042",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Coins/CoinBag1.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Coin bag implies a transaction rather than a menu action.",
+          "listen_for": "Amount feels modest; not an arcade jackpot.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A043",
+          "path": "kenney-rpg-audio/Audio/handleCoins.ogg",
+          "pack": "kenney_rpg",
+          "role": "alternative",
+          "why": "CC0 coin handling comparison.",
+          "listen_for": "Compare subtlety and onset.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "supplies",
+      "category": "Resources",
+      "function": "Supplies acquired or consumed through a site action",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A044",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Bags/BagOpen1.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Bag handling can make supply transactions tangible.",
+          "listen_for": "No modern zipper or exaggerated rummaging.",
+          "proposed_use": "One cue on accepted action; not every passive resource tick",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "healing",
+      "category": "Resources",
+      "function": "Herbs applied or healing action resolves",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A045",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Food & Herbs/Herb1.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Herb handling fits grounded recovery better than a magic potion.",
+          "listen_for": "Does it read as handling rather than a magical power-up?",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "talisman_charge",
+      "category": "Loop",
+      "function": "Talisman charge gained or activated",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A046",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Jewels & Runes/Rune1.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Rune sample is a candidate for an uncanny object interaction.",
+          "listen_for": "Avoid generic RPG sparkle if it clashes with the storm identity.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "talisman_hum",
+      "category": "Loop",
+      "function": "Talisman interaction window remains open",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A047",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Character/QiLoad01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Energy-loading candidate for the old hum gap, but not a proven loop.",
+          "listen_for": "Sustained middle, clicks, tonal fatigue; reject if only a short attack.",
+          "proposed_use": "Requires an approved sustained edit; otherwise use charge one-shot and leave hum silent",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "storm_sting",
+      "category": "Loop",
+      "function": "Snap-back begins",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A048",
+          "path": "nature_sounds_pack/Ambient/AmbientNatureStormRainThunder02.wav",
+          "pack": "nature",
+          "role": "first",
+          "why": "Real storm source from the existing two-part snap-back design.",
+          "listen_for": "Find a convincing thunder hit; record preferred timestamp in Your notes.",
+          "proposed_use": "Excerpt required; then bell; do not play full ambient recording as a sting",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "temple_bell",
+      "category": "Loop",
+      "function": "Snap-back settles into the restored loop",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A049",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Misc/Gong01.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Gong gives the restored loop a resonant identity.",
+          "listen_for": "Decay, low-end weight and whether it reads as the desired temple bell.",
+          "proposed_use": "One resonant tail after storm; avoid abrupt cut",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A050",
+          "path": "100-CC0-SFX/gong_01.ogg",
+          "pack": "pack_100_cc0",
+          "role": "alternative",
+          "why": "CC0 comparison from the shopping list.",
+          "listen_for": "Compare resonance and emotional weight.",
+          "proposed_use": "One-shot; audition original first",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "clock_warning",
+      "category": "Loop",
+      "function": "Loop clock enters its warning band",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A051",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Misc/Gong03.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Real gong candidate replaces the proposed pitched-down generic hit.",
+          "listen_for": "Must differ from snap-back and negative-outcome cues.",
+          "proposed_use": "Once on band entry, not every turn",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "retrace_start",
+      "category": "Loop",
+      "function": "Start replaying a verified command route",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A052",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Books & Scrolls/ScrollOpen3.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Opening an archive scroll could distinguish retrace from a destructive snap-back.",
+          "listen_for": "Brief archival/paper character.",
+          "proposed_use": "Start only; suppress per-command audio spam during fast replay",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "beast_tell",
+      "category": "World tells",
+      "function": "Authored beast proximity reveal",
+      "priority": "optional",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A053",
+          "path": "80-CC0-creature-SFX/howl.ogg",
+          "pack": "creature_cc0",
+          "role": "first",
+          "why": "Existing shopping-list beast-region suggestion.",
+          "listen_for": "Natural distance and mood; not a cartoon wolf.",
+          "proposed_use": "Only with a player-visible authored tell; do not leak hidden state",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "yokai_encounter",
+      "category": "Battle",
+      "function": "Confirmed yokai encounter card opens",
+      "priority": "optional",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A054",
+          "path": "80-CC0-creature-SFX/monster_01.ogg",
+          "pack": "creature_cc0",
+          "role": "first",
+          "why": "Creature family offers contrast to human blade draws.",
+          "listen_for": "Reject cartoon or science-fiction character.",
+          "proposed_use": "Only for matching encounter content; replaces human draw",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_overworld",
+      "category": "Ambience",
+      "function": "Quiet base ambience during a run",
+      "priority": "first_pass",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A055",
+          "path": "nature_sounds_pack/Ambient/AmbientNatureOutside.wav",
+          "pack": "nature",
+          "role": "first",
+          "why": "Shopping-list base-world recording.",
+          "listen_for": "Noise floor and bird repetition over several minutes.",
+          "proposed_use": "Quiet bed; loop seam review; independent of music",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A056",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Ambience/Amb__BambooForest_Day.wav",
+          "pack": "epic_asian",
+          "role": "alternative",
+          "why": "Japanese bamboo setting offers a more specific woodland alternative.",
+          "listen_for": "Bird density and whether it suits non-forest tiles.",
+          "proposed_use": "Quiet bed; choose one base initially",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_coast",
+      "category": "Ambience",
+      "function": "Wreck beach or coastal adjacency",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A057",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Ambience/Amb__Sea_Calm.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Actual calm sea fills the shopping-list surf gap.",
+          "listen_for": "Surf rhythm; avoid implying the listener is aboard a ship.",
+          "proposed_use": "Contextual loop; seam review",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_wind_ridge",
+      "category": "Ambience",
+      "function": "Mountain or exposed ridge",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A058",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Ambience/Amb__Cliff.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Cliff-labelled ambience directly addresses the old ridge gap.",
+          "listen_for": "Check for wind and unwanted location-specific wildlife.",
+          "proposed_use": "Contextual loop; low level",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "river_ambient",
+      "category": "Ambience",
+      "function": "River-adjacent tile",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A059",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/SFX/Misc/RiverSmallLoop.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Explicit small-river loop instead of repurposing a large waterfall.",
+          "listen_for": "Water scale and audible loop seam.",
+          "proposed_use": "Loop while nearby; fade between terrain contexts",
+          "decision": "unreviewed",
+          "notes": ""
+        },
+        {
+          "id": "A060",
+          "path": "nature_sounds_pack/Stream/Stream01.wav",
+          "pack": "nature",
+          "role": "alternative",
+          "why": "CC0 stream comparison.",
+          "listen_for": "Water-only balance and seam suitability.",
+          "proposed_use": "Loop after seam review",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "campfire_loop",
+      "category": "Ambience",
+      "function": "Rest or camp card remains open",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A061",
+          "path": "inventorysfx/inventorysfxbundle/Assets/Ambience/CampAmbience.mp3",
+          "pack": "inventory_sfx",
+          "role": "first",
+          "why": "Camp ambience may fill the old campfire gap.",
+          "listen_for": "Confirm actual fire crackle; reject voices or unrelated camp noise.",
+          "proposed_use": "Contextual bed; MP3 loop requires padding/seam work",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_town",
+      "category": "Ambience",
+      "function": "Japanese town site open or nearby",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A062",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Ambience/Amb__Town_Japanese.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Directly named Japanese town fills the market/crowd gap.",
+          "listen_for": "Modern vehicles, loud intelligible speech or overly dense crowds.",
+          "proposed_use": "Quiet contextual bed",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_village",
+      "category": "Ambience",
+      "function": "Village site open or nearby",
+      "priority": "optional",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A063",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Ambience/Amb__Village_Japanese.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Smaller settlement option if town is too busy.",
+          "listen_for": "Appropriate scale for small settlements.",
+          "proposed_use": "Optional alternative to town; avoid unnecessary bed switches",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_shrine",
+      "category": "Ambience",
+      "function": "Shrine or temple site interaction",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A064",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Ambience/Amb__Temple_Indoor.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Temple interior is a more direct starting point than manufacturing a shrine bed.",
+          "listen_for": "No mismatched ritual or loud voices; shrine is not always indoors.",
+          "proposed_use": "Site-specific only; quiet contextual bed",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_storm",
+      "category": "Ambience",
+      "function": "Storm event or snap-back underlay",
+      "priority": "later",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A065",
+          "path": "nature_sounds_pack/Ambient/AmbientNatureStormRainThunder.wav",
+          "pack": "nature",
+          "role": "first",
+          "why": "Existing shopping-list storm bed.",
+          "listen_for": "Thunder density and masking of the bell cue.",
+          "proposed_use": "Scene/event bed; distinct from short storm_sting excerpt",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "ambient_rain",
+      "category": "Ambience",
+      "function": "Explicitly rainy event presentation",
+      "priority": "optional",
+      "notes": "",
+      "selected": null,
+      "candidates": [
+        {
+          "id": "A066",
+          "path": "epicasianaudiobundle/Epic Asian Audio Bundle/WAV/Ambience/Amb__Rain_Outdoor.wav",
+          "pack": "epic_asian",
+          "role": "first",
+          "why": "Outdoor rain avoids forcing a night ambience on the board.",
+          "listen_for": "Rain texture and loop seam.",
+          "proposed_use": "Only for authored rainy moments; no new weather system implied",
+          "decision": "unreviewed",
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "id": "horn_distant",
+      "category": "Unfilled",
+      "function": "Authored detection tell",
+      "priority": "later",
+      "notes": "No clearly named horn or conch sample found. Keep this slot open instead of relabelling a gong.\n\nLeave silent until a candidate is approved.",
+      "selected": null,
+      "candidates": []
+    },
+    {
+      "id": "crow_startle",
+      "category": "Unfilled",
+      "function": "Authored proximity tell",
+      "priority": "later",
+      "notes": "No clearly named crow sample found. Owl recordings are not a crow substitute.\n\nLeave silent until a candidate is approved.",
+      "selected": null,
+      "candidates": []
+    },
+    {
+      "id": "taiko_hit",
+      "category": "Unfilled",
+      "function": "Alternative clock-warning identity",
+      "priority": "later",
+      "notes": "War Dance percussion is a music track, not a verified isolated drum hit. Use approved gong or source a proper hit.\n\nLeave silent until a candidate is approved.",
+      "selected": null,
+      "candidates": []
+    }
+  ]
+}
