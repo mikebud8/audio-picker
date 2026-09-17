@@ -301,6 +301,17 @@ def test_unowned_hub_neither_reports_nor_stops_the_player(qtbot, make_lw, root):
     assert not any(c == ("stop",) for c in w.player.calls)
 
 
+def test_unowned_hub_still_saves_on_ctrl_s(make_lw, root):
+    """Saving is idempotent, so Ctrl+S must write whoever owns the hub (it was a silent no-op)."""
+    w = make_lw(owns_hub=False, hub=AnnotationHub(LibraryAnnotations(root)))
+    w.list.setCurrentRow(2)
+    w.editor.stars[2].click()
+    assert w.hub.store.dirty
+    assert w.flush()
+    assert not w.hub.store.dirty
+    assert LibraryAnnotations(root).get("packA/confirm.ogg").rating == 3
+
+
 def test_closing_while_playing_stops_a_borrowed_player(make_lw, root):
     w = make_lw(owns_hub=False, hub=AnnotationHub(LibraryAnnotations(root)))
     w.list.setCurrentRow(1)

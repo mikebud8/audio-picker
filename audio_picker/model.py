@@ -347,11 +347,10 @@ def dumps(review: Review) -> str:
     return json.dumps(to_dict(review), indent=2, ensure_ascii=False) + "\n"
 
 
-def save(review: Review, path: Path) -> None:
-    """Atomic write: `<file>.tmp` beside the target, then os.replace."""
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write `data` to `path` through `<file>.tmp` beside it, then os.replace. Raises OSError."""
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
-    data = dumps(review).encode("utf-8")
     try:
         with open(tmp, "wb") as f:
             f.write(data)
@@ -359,3 +358,8 @@ def save(review: Review, path: Path) -> None:
     finally:
         if tmp.exists():
             tmp.unlink(missing_ok=True)
+
+
+def save(review: Review, path: Path) -> None:
+    """Atomic write: `<file>.tmp` beside the target, then os.replace."""
+    atomic_write_bytes(Path(path), dumps(review).encode("utf-8"))

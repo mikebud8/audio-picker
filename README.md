@@ -19,8 +19,8 @@ Python 3.11 or newer; PySide6 6.11.2 or newer (the version that passed the codec
 All seven implementation steps of the design are in place: data model, paths,
 library index, check report, CSV import, export manifest, command line and
 the GUI, plus the library annotations feature (rating, tags and notes) on
-top. Run the tests with `.venv\Scripts\python -m pytest`; 362 tests, including
-the library-annotations suite.
+top. Run the tests with `.venv\Scripts\python -m pytest`; the suite covers the
+model, the command line, the GUI, the library annotations and the screenshots.
 
 The test run also writes screenshots of the main window and dialogs in light
 and dark themes, and of the Library notes dock, the widened Add Candidate
@@ -73,7 +73,7 @@ The standalone library viewer (`File, Library viewer…` or
 | `S` | Stop. |
 | `L` | Toggle loop. |
 | `Ctrl+F` | Focus the search box. |
-| `Ctrl+S` | Save now (standalone viewer; opened from the review window, notes autosave and the review's Ctrl+S saves them). |
+| `Ctrl+S` | Save now. |
 | `F5` | Rescan the library. |
 | `Ctrl+W` | Close the viewer. |
 | `Escape` | Leave a text field (clears a half-typed tag) and return to the file list. |

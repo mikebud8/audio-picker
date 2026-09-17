@@ -444,16 +444,19 @@ The UI depends on the `Player` interface only, so tests substitute a fake.
 leading `•` while unsaved changes exist (they exist for at most the autosave
 delay). A `QSplitter`: slot tree on the left (about 30%), slot panel on the
 right. Status bar shows the last message (autosave time, player errors, check
-summary). Window geometry and the last opened file are remembered with
+summary). A "Library notes" dock on the right (hidden until asked for) holds an
+annotation editor that follows the active candidate's file. Window geometry, the
+dock state and the last opened file are remembered with
 `QSettings("audio-picker", "audio-picker")`.
 
 Menu bar:
 
 - File: Open… (Ctrl+O), Save now (Ctrl+S), Export manifest… (runs `export`
-  to a chosen file), Rescan library, Quit.
+  to a chosen file), Rescan library, Library viewer… (section 5.3), Quit.
 - Slot: Add slot… (Ctrl+N), Edit slot… (Ctrl+E), Remove slot, Next slot
   (Ctrl+Down), Previous slot (Ctrl+Up).
 - Candidate: Add candidate… (Ctrl+Shift+N), Remove candidate.
+- View: Library notes (toggles the dock).
 - Help: Keyboard shortcuts (a dialog listing section 13.6).
 
 ### 13.2 Slot tree (`slot_tree.py`)
@@ -624,8 +627,10 @@ the timer stopped until the next mutation or flush. This is conflict
 *detection*, not merging.
 
 **Failures.** A save failure (permissions, disk) shows a modal error and keeps
-the dirty flag; quitting with a failed or cancelled save asks for
-confirmation ("Quit without saving?").
+the dirty flag; quitting or opening another review after a failed or cancelled
+save shows the unsaved-changes dialog, which names every file still unwritten
+(the review file, the library notes sidecar, or both) and offers "Try again",
+"Discard and `<action>`", or "Cancel".
 
 If `load` raises `ReviewError`, the GUI shows the message in a dialog and exits
 with code 1. It never "repairs" a file.

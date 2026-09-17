@@ -7,13 +7,12 @@ section 3). One store per audio root per process. Imports nothing from Qt.
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .model import relative_path_problem
+from .model import atomic_write_bytes, relative_path_problem
 
 SIDECAR_NAME = "audio-picker-library.json"
 ANNOTATIONS_VERSION = 1
@@ -295,13 +294,5 @@ class LibraryAnnotations:
         """Atomic write through `<file>.tmp`. A no-op while `read_only`. Raises OSError."""
         if self.read_only:
             return
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        data = self.dumps().encode("utf-8")
-        try:
-            with open(tmp, "wb") as f:
-                f.write(data)
-            os.replace(tmp, self.path)
-        finally:
-            if tmp.exists():
-                tmp.unlink(missing_ok=True)
+        atomic_write_bytes(self.path, self.dumps().encode("utf-8"))
         self.dirty = False

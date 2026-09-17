@@ -1,4 +1,8 @@
-"""Main window: menus, splitter, shortcuts, autosave and file safety (design 13.1, 13.6, 13.8)."""
+"""Main window: menus, splitter, shortcuts, autosave and file safety (design 13.1, 13.6, 13.8).
+
+It also hosts the "Library notes" dock, whose editor reaches the library annotations through
+the annotation hub it owns and shares with the library viewer.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ from ..model import Candidate, Review, ReviewError, Slot, load, save
 from ..paths import resolve_root, to_absolute
 from ..player import PlayerState
 from .annotation_editor import AnnotationEditor
-from .annotation_hub import AnnotationHub
+from .annotation_hub import AUTOSAVE_MS, AnnotationHub
 from .dialogs import Dialogs
 from .keys import text_field_focused
 from .library_window import LibraryWindow
@@ -28,8 +32,6 @@ from .slot_panel import SlotPanel
 from .slot_tree import SlotTree
 from .theme import error_css
 from .transport_bar import TransportBar
-
-AUTOSAVE_MS = 500
 
 
 def _fingerprint(path: Path) -> tuple[int, int, str] | None:
@@ -177,7 +179,7 @@ class MainWindow(QMainWindow):
             action.setShortcuts([QKeySequence(k) for k in keys])
         action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         if single_key:
-            action.triggered.connect(lambda: None if self._text_focused() else handler())
+            action.triggered.connect(lambda: None if text_field_focused() else handler())
         else:
             action.triggered.connect(lambda: handler())
         self.addAction(action)
@@ -241,10 +243,6 @@ class MainWindow(QMainWindow):
         self.player.error.connect(self._on_player_error)
 
     # -- helpers -------------------------------------------------------------------
-
-    @staticmethod
-    def _text_focused() -> bool:
-        return text_field_focused()
 
     def _slot(self) -> Slot | None:
         return self.review.slot(self._current_slot) if self._current_slot else None
@@ -403,10 +401,12 @@ class MainWindow(QMainWindow):
         if self.library_window is not None:
             lw = self.library_window
             self.library_window = None
+            # Unsubscribe first: deleteLater only drops the hub connections once the event loop
+            # spins, and until then a retired viewer would rebuild its rows for the store we left.
+            lw.detach()
             lw.close()
-            # Free it: a retired viewer would go on rebuilding its rows against the old root
-            # every time the hub reports an edit. Every slot it holds is a bound method or a
-            # QObject slot, so Qt drops them all with the object.
+            # Free it. Every other slot it holds is a bound method or a QObject slot, so Qt
+            # drops them all with the object.
             lw.deleteLater()
 
     def _on_viewer_play(self) -> None:

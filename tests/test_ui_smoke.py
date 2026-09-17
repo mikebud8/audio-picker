@@ -938,6 +938,19 @@ def test_open_other_frees_the_retired_viewer(qtbot, make_win, tmp_root, tmp_path
     w.hub.notify_changed("packA/click.wav")
 
 
+def test_open_other_detaches_the_retired_viewer_from_the_hub(make_win, tmp_root, tmp_path):
+    """deleteLater waits for the event loop; the new store must not reach the old viewer first."""
+    w = make_win(tmp_root)
+    w.actions["library"].trigger()
+    old = w.library_window
+    calls = []
+    old.refresh_list = lambda: calls.append(1)
+    other_review, _other_root = _other_review(tmp_path)
+    w.dialogs.open_target = other_review
+    w.actions["open"].trigger()
+    assert calls == []
+
+
 def test_cancelling_the_open_dialog_keeps_the_viewer(make_win, tmp_root):
     w = make_win(tmp_root)
     w.actions["library"].trigger()

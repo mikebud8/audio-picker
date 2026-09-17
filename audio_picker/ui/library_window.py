@@ -399,13 +399,25 @@ class LibraryWindow(QMainWindow):
         self.dialogs.error(self, "Save failed", message)
 
     def flush(self) -> bool:
-        if not self.owns_hub:
-            return True
+        """Save the notes now. Idempotent, so Ctrl+S works whoever owns the hub."""
         was_dirty = self.hub.store.dirty
         ok = self.hub.flush()
         if ok and was_dirty:
             self.statusBar().showMessage(f"Saved {datetime.now().strftime('%H:%M:%S')}")
         return ok
+
+    def detach(self) -> None:
+        """Unsubscribe from the hub. A retiring host calls this before closing us.
+
+        Qt only drops a connection when the receiver is destroyed, which waits for the event
+        loop; until then a retired viewer would go on rebuilding its rows for a store it no
+        longer belongs to.
+        """
+        for signal, slot in ((self.hub.changed, self._on_hub_changed), (self.hub.reloaded, self._on_hub_reloaded)):
+            try:
+                signal.disconnect(slot)
+            except RuntimeError:
+                pass  # already disconnected
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt override)
         if self.owns_hub:
