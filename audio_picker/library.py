@@ -49,7 +49,8 @@ class AudioLibrary:
 
         A term starting with `#` names a tag in `annotations` (a
         `LibraryAnnotations`); other terms are path substrings. Tag terms
-        match nothing without a store. A bare `#` is ignored.
+        match nothing without a store. A bare `#` is ignored. A non-positive
+        `limit` returns nothing.
         """
         terms = query.lower().split()
         tag_terms = [t[1:] for t in terms if t.startswith("#") and len(t) > 1]

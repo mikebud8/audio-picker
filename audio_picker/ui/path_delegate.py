@@ -6,7 +6,7 @@ from html import escape
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPalette, QTextDocument
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from .theme import dim_color
 
@@ -19,7 +19,7 @@ def path_html(rel: str, color: str, summary: str = "", dim: str = "") -> str:
     body = f"<b>{escape(folder)}</b>/{escape(rest)}" if sep else escape(rel)
     html = f'<span style="color: {color}">{body}</span>'
     if summary:
-        html += f'&nbsp;&nbsp;<span style="color: {dim}">{escape(summary)}</span>'
+        html += f'<span style="color: {dim}">&nbsp;&nbsp;{escape(summary)}</span>'
     return html
 
 
@@ -42,7 +42,7 @@ class PathDelegate(QStyledItemDelegate):
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         opt.text = ""
-        style = opt.widget.style() if opt.widget else QStyle()
+        style = opt.widget.style() if opt.widget else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         doc = self._document(opt, index, selected=bool(opt.state & QStyle.StateFlag.State_Selected))
         painter.save()

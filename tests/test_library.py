@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from audio_picker.annotations import LibraryAnnotations
 from audio_picker.library import AudioLibrary
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "audio"
@@ -66,8 +67,6 @@ def test_search_is_capped(root):
     lib = AudioLibrary(root)
     assert lib.search("", limit=2) == ["loose.flac", "packA/click.wav"]
     assert lib.search("", limit=0) == []
-    from audio_picker.annotations import LibraryAnnotations
-
     store = LibraryAnnotations(root)
     store.add_tag("packA/click.wav", "ui")
     store.add_tag("packB/hit.mp3", "ui")
@@ -106,8 +105,6 @@ def test_fixture_library_matches_example_review():
 
 
 def test_hash_terms_match_tags_from_the_store(root):
-    from audio_picker.annotations import LibraryAnnotations
-
     lib = AudioLibrary(root)
     store = LibraryAnnotations(root)
     store.add_tag("packA/click.wav", "ui")
