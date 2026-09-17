@@ -37,6 +37,7 @@ def _launch_gui(review_path: Path, root: Path) -> int:
 
 
 def _launch_library(root: Path) -> int:
+    """Imported lazily so the data-layer commands never load Qt."""
     from .ui.app import run_library
 
     return run_library(root)

@@ -1,6 +1,7 @@
 """Command line (design section 7): dispatch, exit codes, and file behaviour."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -281,11 +282,23 @@ def test_library_subcommand_launches_the_viewer(library_gui):
     assert library_gui == [FIXTURE_ROOT]
 
 
+def test_library_relative_root_is_made_absolute(library_gui):
+    assert cli.main(["library", "--root", os.path.relpath(FIXTURE_ROOT)]) == 0
+    assert library_gui == [FIXTURE_ROOT]
+
+
 def test_library_requires_root(capsys):
     assert cli.main(["library"]) == 2
+    assert "--root" in capsys.readouterr().err
 
 
 def test_library_bad_root_is_exit_1(library_gui, tmp_path, capsys):
     assert cli.main(["library", "--root", str(tmp_path / "nope")]) == 1
     assert library_gui == []
     assert "nope" in capsys.readouterr().err
+
+
+def test_library_file_as_root_is_exit_1(library_gui, capsys):
+    assert cli.main(["library", "--root", str(FIXTURE_ROOT / "packA" / "click.wav")]) == 1
+    assert library_gui == []
+    assert "click.wav" in capsys.readouterr().err
