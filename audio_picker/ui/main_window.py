@@ -10,18 +10,21 @@ from typing import Callable
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import QMainWindow, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QVBoxLayout, QWidget
 
+from ..annotations import LibraryAnnotations
 from ..check import CheckReport, check_review
 from ..export import build_manifest
 from ..library import AudioLibrary
 from ..model import Candidate, Review, ReviewError, Slot, load, save
 from ..paths import resolve_root, to_absolute
 from ..player import PlayerState
+from .annotation_hub import AnnotationHub
 from .dialogs import Dialogs
 from .keys import text_field_focused
 from .slot_panel import SlotPanel
 from .slot_tree import SlotTree
+from .theme import error_css
 from .transport_bar import TransportBar
 
 AUTOSAVE_MS = 500
@@ -55,9 +58,13 @@ class MainWindow(QMainWindow):
         self.root = Path(root)
         self.review: Review = load(self.review_path)
         self.library = AudioLibrary(self.root)
+        self.hub = AnnotationHub(LibraryAnnotations(self.root), self)
+        self.hub.save_failed.connect(self._on_annotations_save_failed)
+        self.hub.reloaded.connect(self._on_annotations_reloaded)
         self._fingerprint = _fingerprint(self.review_path)
         self._dirty = False
         self._saving = False
+        self._settling = False
         self._current_slot: str | None = None
         self._playing_cid: str | None = None
         self._missing_slots: set[str] = set()
@@ -83,6 +90,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_file", str(self.review_path))
 
         self._run_check()
+        self._report_annotations_load()
         self.tree.set_review(self.review, self._missing_slots)
         self._update_title()
         self.tree.view.setFocus()
@@ -108,7 +116,10 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(1, 7)
         self.splitter.setSizes([360, 840])
         self.setCentralWidget(self.splitter)
-        self.statusBar()
+        self.annotations_warning = QLabel()
+        self.annotations_warning.setStyleSheet(error_css())
+        self.annotations_warning.hide()
+        self.statusBar().addPermanentWidget(self.annotations_warning)
 
         self.tree.current_slot_changed.connect(self._on_current_slot)
         self.panel.play_clicked.connect(self._toggle_candidate)
@@ -268,11 +279,56 @@ class MainWindow(QMainWindow):
         if self._dirty:
             self._save()
 
-    def flush(self) -> None:
-        """Cancel the timer and save immediately if dirty."""
+    def flush(self) -> bool:
+        """Cancel the timers and save both files now if dirty. False if either is still unsaved."""
         self._save_timer.stop()
+        review_ok = self._save() if self._dirty else True
+        notes_ok = self.hub.flush()
+        return review_ok and notes_ok
+
+    # -- unsaved changes ------------------------------------------------------------------
+
+    def _unsaved_files(self) -> list[str]:
+        files = []
         if self._dirty:
-            self._save()
+            files.append(self.review_path.name)
+        if self.hub.store.dirty:
+            files.append(self.hub.store.path.name)
+        return files
+
+    def settle_unsaved(self, action: str) -> bool:
+        """Flush both files; on failure ask try again / discard / cancel. True means go ahead."""
+        self._settling = True
+        try:
+            while not self.flush():
+                answer = self.dialogs.unsaved(self, action, self._unsaved_files())
+                if answer == "discard":
+                    return True
+                if answer != "retry":
+                    return False
+            return True
+        finally:
+            self._settling = False
+
+    # -- library annotations ----------------------------------------------------------------
+
+    def _report_annotations_load(self) -> None:
+        """Show a malformed-sidecar error and keep a permanent warning while the store is read-only."""
+        store = self.hub.store
+        if store.load_error:
+            self.dialogs.error(self, "Library notes not loaded", store.load_error)
+        self.annotations_warning.setText(
+            f"Library notes not loaded: fix {store.path.name} and rescan" if store.read_only else ""
+        )
+        self.annotations_warning.setVisible(store.read_only)
+
+    def _on_annotations_reloaded(self) -> None:
+        self._report_annotations_load()
+
+    def _on_annotations_save_failed(self, message: str) -> None:
+        if self._settling:
+            return  # the unsaved-changes dialog names the file and offers a retry: one modal is enough
+        self.dialogs.error(self, "Save failed", message)
 
     def _changed_on_disk(self) -> bool:
         try:
@@ -590,10 +646,14 @@ class MainWindow(QMainWindow):
         self._run_check()
         self.tree.set_missing(self._missing_slots)
         self.panel.set_missing(self._missing_cids)
-        self._status(f"Library rescanned: {len(self.library)} audio files. " + self.statusBar().currentMessage())
+        notes = self.hub.reload()
+        self._status(
+            f"Library rescanned: {len(self.library)} audio files; {notes}. " + self.statusBar().currentMessage()
+        )
 
     def _open_other(self) -> None:
-        self.flush()
+        if not self.settle_unsaved("open another review"):
+            return
         target = self.dialogs.open_review_path(self, self.review_path.parent)
         if target is None:
             return
@@ -608,6 +668,7 @@ class MainWindow(QMainWindow):
         self.root = root
         self.review = review
         self.library = AudioLibrary(root)
+        self.hub.set_store(LibraryAnnotations(root))
         self._fingerprint = _fingerprint(target)
         self._dirty = False
         self.settings.setValue("last_file", str(target))
@@ -616,8 +677,7 @@ class MainWindow(QMainWindow):
     # -- lifecycle --------------------------------------------------------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.flush()
-        if self._dirty and not self.dialogs.quit_without_saving(self):
+        if not self.settle_unsaved("quit"):
             event.ignore()
             return
         self.player.stop()

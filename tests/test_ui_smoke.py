@@ -8,8 +8,10 @@ import pytest
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
+from audio_picker.annotations import SIDECAR_NAME, LibraryAnnotations
 from audio_picker.model import load
 from audio_picker.player import PlayerState
+from audio_picker.ui.annotation_hub import AnnotationHub
 from audio_picker.ui.main_window import MainWindow
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "review.json"
@@ -81,7 +83,7 @@ class FakeDialogs:
         self.calls: list[tuple] = []
         self.confirm_answer = True
         self.conflict_answer = "cancel"
-        self.quit_answer = True
+        self.unsaved_answer = "discard"
         self.export_target: Path | None = None
         self.open_target: Path | None = None
 
@@ -96,9 +98,9 @@ class FakeDialogs:
         self.calls.append(("conflict", Path(path)))
         return self.conflict_answer
 
-    def quit_without_saving(self, parent) -> bool:
-        self.calls.append(("quit_without_saving",))
-        return self.quit_answer
+    def unsaved(self, parent, action: str, files: list[str]) -> str:
+        self.calls.append(("unsaved", action, tuple(files)))
+        return self.unsaved_answer
 
     def export_path(self, parent, start: Path) -> Path | None:
         self.calls.append(("export_path",))
@@ -128,15 +130,23 @@ def review_file(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def tmp_root(tmp_path: Path) -> Path:
+    """A writable copy of the audio fixture so annotation saves never touch the repo."""
+    dst = tmp_path / "audio"
+    shutil.copytree(FIXTURE_ROOT, dst)
+    return dst
+
+
+@pytest.fixture
 def make_win(qtbot, tmp_path, review_file):
     def _make(root: Path = FIXTURE_ROOT) -> MainWindow:
         settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
         w = MainWindow(review_file, root, player=FakePlayer(), dialogs=FakeDialogs(), settings=settings)
         qtbot.addWidget(w)
-        w.show()
-        qtbot.waitExposed(w)
-        w.activateWindow()
-        qtbot.waitActive(w)
+        with qtbot.waitExposed(w):
+            w.show()
+        with qtbot.waitActive(w):  # a window made inside a test body is not active until the loop spins
+            w.activateWindow()
         return w
 
     return _make
@@ -461,14 +471,14 @@ def test_external_change_overwrite_takes_model_version(qtbot, win, review_file):
     assert disk(review_file).project == "example"
 
 
-def test_quit_after_cancelled_save_asks_for_confirmation(qtbot, win, review_file):
+def test_quit_after_cancelled_save_asks_and_can_be_cancelled(qtbot, win, review_file):
     _rewrite_on_disk(review_file, "edited-elsewhere")
     win.tree.select_slot("ui_confirm")
     press(qtbot, win, Qt.Key.Key_Y)
-    win.dialogs.quit_answer = False
+    win.dialogs.unsaved_answer = "cancel"
     assert not win.close()
-    assert ("quit_without_saving",) in win.dialogs.calls
-    win.dialogs.quit_answer = True
+    assert ("unsaved", "quit", ("review.json",)) in win.dialogs.calls
+    win.dialogs.unsaved_answer = "discard"
     assert win.close()
 
 
@@ -513,3 +523,159 @@ def test_space_plays_first_candidate_when_nothing_loaded(qtbot, win):
     assert win.player.calls[-1] == ("stop",)
     press(qtbot, win, Qt.Key.Key_L)
     assert win.transport.loop.isChecked()
+
+
+# -- library annotations hub -------------------------------------------------------------
+
+
+def test_window_builds_the_hub_for_its_root(make_win, tmp_root):
+    w = make_win(tmp_root)
+    assert isinstance(w.hub, AnnotationHub)
+    assert w.hub.store.path == tmp_root / SIDECAR_NAME
+
+
+def test_hub_change_autosaves_the_sidecar(qtbot, make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.hub.store.set_rating("packA/click.wav", 4)
+    w.hub.notify_changed("packA/click.wav")
+    qtbot.waitUntil(lambda: (tmp_root / SIDECAR_NAME).exists(), timeout=3000)
+    assert LibraryAnnotations(tmp_root).get("packA/click.wav").rating == 4
+
+
+def test_ctrl_s_flushes_the_sidecar(qtbot, make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.hub.store.add_tag("packA/click.wav", "ui")
+    w.hub.notify_changed("packA/click.wav")
+    press(qtbot, w, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
+    assert LibraryAnnotations(tmp_root).has_tag("packA/click.wav", "ui")
+
+
+def test_close_flushes_the_sidecar(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.hub.store.set_note("packA/click.wav", "bye")
+    w.hub.notify_changed("packA/click.wav")
+    assert w.close()
+    assert LibraryAnnotations(tmp_root).get("packA/click.wav").note == "bye"
+
+
+def _break_sidecar_saves(w, tmp_root) -> None:
+    """A directory where the sidecar should be makes every save raise OSError."""
+    (tmp_root / SIDECAR_NAME).mkdir()
+    w.hub.store.set_rating("packA/click.wav", 2)
+    w.hub.notify_changed("packA/click.wav")
+
+
+def _note_errors(w) -> int:
+    return sum(1 for c in w.dialogs.calls if c[0] == "error" and "library notes" in c[1].lower())
+
+
+def test_sidecar_save_failure_shows_an_error(qtbot, make_win, tmp_root):
+    w = make_win(tmp_root)
+    _break_sidecar_saves(w, tmp_root)
+    qtbot.waitUntil(
+        lambda: any(c[0] == "error" and "library notes" in c[1].lower() for c in w.dialogs.calls), timeout=3000
+    )
+    assert w.hub.store.dirty
+
+
+def test_quit_with_unsaved_sidecar_asks_and_cancel_keeps_the_window(make_win, tmp_root):
+    w = make_win(tmp_root)
+    _break_sidecar_saves(w, tmp_root)
+    w.dialogs.unsaved_answer = "cancel"
+    before = _note_errors(w)
+    assert not w.close()
+    assert ("unsaved", "quit", (SIDECAR_NAME,)) in w.dialogs.calls
+    assert _note_errors(w) == before, "settling shows the unsaved dialog only, not a second error box"
+    w.dialogs.unsaved_answer = "discard"
+    assert w.close()
+
+
+def test_quit_retry_succeeds_once_the_obstacle_is_gone(make_win, tmp_root):
+    w = make_win(tmp_root)
+    _break_sidecar_saves(w, tmp_root)
+    answers = iter(["retry", "cancel"])
+
+    def unsaved(parent, action, files):
+        w.dialogs.calls.append(("unsaved", action, tuple(files)))
+        (tmp_root / SIDECAR_NAME).rmdir()
+        return next(answers)
+
+    w.dialogs.unsaved = unsaved
+    assert w.close()
+    assert LibraryAnnotations(tmp_root).get("packA/click.wav").rating == 2
+    assert [c for c in w.dialogs.calls if c[0] == "unsaved"] == [("unsaved", "quit", (SIDECAR_NAME,))]
+
+
+def test_unsaved_dialog_names_both_files(qtbot, make_win, tmp_root, review_file):
+    w = make_win(tmp_root)
+    _break_sidecar_saves(w, tmp_root)
+    _rewrite_on_disk(review_file, "edited-elsewhere")  # the review save will hit the conflict dialog (cancel)
+    w.tree.select_slot("ui_confirm")
+    press(qtbot, w, Qt.Key.Key_Y)
+    w.dialogs.unsaved_answer = "cancel"
+    assert not w.close()
+    assert ("unsaved", "quit", ("review.json", SIDECAR_NAME)) in w.dialogs.calls
+
+
+def test_open_other_with_unsaved_sidecar_cancel_keeps_everything(make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    _break_sidecar_saves(w, tmp_root)
+    w.dialogs.unsaved_answer = "cancel"
+    w.dialogs.open_target = tmp_path / "never.json"
+    w.actions["open"].trigger()
+    assert ("unsaved", "open another review", (SIDECAR_NAME,)) in w.dialogs.calls
+    assert ("open_review_path",) not in w.dialogs.calls
+    assert w.hub.store.dirty
+
+
+def _other_review(tmp_path: Path) -> tuple[Path, Path]:
+    other_root = tmp_path / "other_audio"
+    shutil.copytree(FIXTURE_ROOT, other_root)
+    other_review = tmp_path / "other" / "review.json"
+    other_review.parent.mkdir()
+    data = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    data["root"] = "../other_audio"
+    other_review.write_text(json.dumps(data), encoding="utf-8")
+    return other_review, other_root
+
+
+def test_open_other_review_flushes_and_switches_the_store(make_win, tmp_root, tmp_path):
+    w = make_win(tmp_root)
+    w.hub.store.add_tag("packA/click.wav", "first")
+    w.hub.notify_changed("packA/click.wav")
+    other_review, other_root = _other_review(tmp_path)
+    w.dialogs.open_target = other_review
+    w.actions["open"].trigger()
+    assert LibraryAnnotations(tmp_root).has_tag("packA/click.wav", "first")
+    assert w.hub.store.path == other_root / SIDECAR_NAME
+    assert not w.hub.store.has_tag("packA/click.wav", "first")
+
+
+def test_malformed_sidecar_is_reported_once_and_the_store_is_read_only(make_win, tmp_root):
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    w = make_win(tmp_root)
+    assert sum(1 for c in w.dialogs.calls if c[0] == "error" and "version" in c[1]) == 1
+    assert w.hub.store.read_only
+    assert w.annotations_warning.isVisible()
+    assert "rescan" in w.annotations_warning.text()
+
+
+def test_rescan_reloads_a_fixed_sidecar_and_clears_the_warning(make_win, tmp_root):
+    (tmp_root / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    w = make_win(tmp_root)
+    good = {"version": 1, "tags": [], "files": {"packA/click.wav": {"tags": ["fixed"]}}}
+    (tmp_root / SIDECAR_NAME).write_text(json.dumps(good), encoding="utf-8")
+    w.actions["rescan"].trigger()
+    assert not w.hub.store.read_only
+    assert not w.annotations_warning.isVisible()
+    assert w.hub.store.has_tag("packA/click.wav", "fixed")
+    assert "reloaded" in w.statusBar().currentMessage()
+
+
+def test_rescan_keeps_a_dirty_store_and_says_so(make_win, tmp_root):
+    w = make_win(tmp_root)
+    w.hub.store.add_tag("packA/click.wav", "mine")
+    w.hub.notify_changed("packA/click.wav")
+    w.actions["rescan"].trigger()  # fires before the 500 ms autosave, so the store is still dirty
+    assert w.hub.store.has_tag("packA/click.wav", "mine")
+    assert "not reloaded" in w.statusBar().currentMessage()

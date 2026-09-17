@@ -278,8 +278,24 @@ class Dialogs:
             return "overwrite"
         return "cancel"
 
-    def quit_without_saving(self, parent: QWidget | None) -> bool:
-        return self.confirm(parent, "Quit", "The review could not be saved. Quit without saving?")
+    def unsaved(self, parent: QWidget | None, action: str, files: list[str]) -> str:
+        """Files could not be saved. Returns "retry", "discard" or "cancel"."""
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Unsaved changes")
+        box.setText(f"{' and '.join(files)} could not be saved.")
+        box.setInformativeText(f"Try again, or discard the unsaved changes and {action}.")
+        retry = box.addButton("Try again", QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton(f"Discard and {action}", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is retry:
+            return "retry"
+        if clicked is discard:
+            return "discard"
+        return "cancel"
 
     def export_path(self, parent: QWidget | None, start: Path) -> Path | None:
         name, _ = QFileDialog.getSaveFileName(parent, "Export manifest", str(start), "JSON (*.json)")
