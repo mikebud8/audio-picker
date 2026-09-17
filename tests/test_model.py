@@ -13,6 +13,7 @@ from audio_picker.model import (
     from_dict,
     load,
     next_candidate_id_for,
+    relative_path_problem,
     save,
     to_dict,
 )
@@ -195,8 +196,6 @@ def test_candidate_dataclass_equality():
 
 
 def test_relative_path_problem_names_each_rule():
-    from audio_picker.model import relative_path_problem
-
     assert relative_path_problem("packA/click.wav") is None
     assert relative_path_problem("") == "path is empty"
     assert "absolute" in relative_path_problem("/abs/x.wav")
