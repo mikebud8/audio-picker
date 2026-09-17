@@ -41,7 +41,7 @@ SHORTCUTS = [
     ("L", "Toggle loop"),
     ("Y / N", "Mark the active candidate yay / nay (again to clear)"),
     ("Enter", "Select the active candidate for the slot"),
-    ("Escape", "Leave a text field and return to the slot tree"),
+    ("Escape", "Leave a text field (clears a half-typed tag) and return to the slot tree"),
     ("Ctrl+Down / Ctrl+Up", "Next / previous slot (wraps)"),
     ("Ctrl+F", "Focus the slot search box"),
     ("Ctrl+S", "Save now"),

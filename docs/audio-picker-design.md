@@ -260,7 +260,12 @@ audio-picker gui REVIEW.json [--root DIR]
 audio-picker import-csv INPUT.csv -o REVIEW.json --root DIR --project NAME [--force]
 audio-picker export REVIEW.json [--root DIR] [-o MANIFEST.json] [--strict]
 audio-picker check REVIEW.json [--root DIR]
+audio-picker library --root DIR                  # browse, rate and tag the library
 ```
+
+Library annotations (rating, tags, note per file, stored in
+`audio-picker-library.json` in the audio root) are specified in
+`docs/superpowers/specs/2026-09-17-library-annotations-design.md`.
 
 Exit codes: 0 success; 1 validation or file error (message on stderr);
 2 argparse usage error. `export --strict` returns 1 if any `first_pass` slot
@@ -772,6 +777,9 @@ retired before any other code is written.
 - Waveform display and loop-seam preview (A/B at a chosen offset).
 - Copy/convert step driven by the manifest.
 - Multiple candidate id prefixes per review.
+- Library annotations phase two (multi-select and apply-tag-to-folder) and
+  phase three (tag and rating filters in Add Candidate); see the annotations
+  spec, section 9.
 
 ## 18. Implementation order
 
