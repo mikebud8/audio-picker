@@ -69,6 +69,13 @@ def test_set_store_stops_the_timer_and_emits(qtbot, hub, tmp_path):
     other = LibraryAnnotations(tmp_path / "other")
     with qtbot.waitSignal(hub.reloaded):
         hub.set_store(other)
+    assert not hub._timer.isActive()
     assert hub.store is other
-    qtbot.wait(700)
     assert not (tmp_path / SIDECAR_NAME).exists(), "the old store was dropped, not saved"
+
+
+def test_flush_on_a_read_only_store_returns_true(hub, tmp_path):
+    (tmp_path / SIDECAR_NAME).write_text('{"version": 9}', encoding="utf-8")
+    hub.reload()
+    assert hub.store.read_only
+    assert hub.flush() is True
