@@ -65,6 +65,13 @@ def test_search_empty_query_returns_everything(root):
 def test_search_is_capped(root):
     lib = AudioLibrary(root)
     assert lib.search("", limit=2) == ["loose.flac", "packA/click.wav"]
+    assert lib.search("", limit=0) == []
+    from audio_picker.annotations import LibraryAnnotations
+
+    store = LibraryAnnotations(root)
+    store.add_tag("packA/click.wav", "ui")
+    store.add_tag("packB/hit.mp3", "ui")
+    assert lib.search("#ui", limit=1, annotations=store) == ["packA/click.wav"]
 
 
 def test_pack_folder_is_first_component():

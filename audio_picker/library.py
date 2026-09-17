@@ -56,6 +56,8 @@ class AudioLibrary:
         path_terms = [t for t in terms if not t.startswith("#")]
         if tag_terms and annotations is None:
             return []
+        if limit <= 0:
+            return []
         hits: list[str] = []
         for p in self._paths:
             low = p.lower()
