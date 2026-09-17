@@ -781,6 +781,23 @@ def test_typing_y_in_the_dock_note_does_not_mark_a_decision(qtbot, make_win, tmp
     assert w.hub.store.get("packA/click.wav").note == "yn1"
 
 
+def test_enter_in_the_dock_tag_field_adds_a_tag_and_tree_enter_still_selects(qtbot, make_win, tmp_root):
+    # tmp_root, not the shared fixture: the committed tag dirties the store and closing writes it out.
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    w.notes_editor.tag_input.setFocus()
+    qtbot.keyClicks(w.notes_editor.tag_input, "half")
+    qtbot.keyClick(w.notes_editor.tag_input, Qt.Key.Key_Return)
+    assert w.hub.store.has_tag("packA/click.wav", "half")
+    assert w.notes_editor.tag_input.text() == ""
+    assert w.review.slot("ui_click").selected == "A001"  # unchanged
+    assert not w.windowTitle().startswith("•")  # the window's Return shortcut never ran: no re-select, no edit
+    w.tree.select_slot("ui_confirm")
+    w.tree.view.setFocus()  # selecting a slot leaves focus in the dock; the user comes back to the tree
+    press(qtbot, w, Qt.Key.Key_Return)
+    assert w.review.slot("ui_confirm").selected == "A003"
+
+
 def test_escape_in_the_dock_clears_the_tag_field_and_returns_to_the_tree(qtbot, win):
     win.notes_dock.show()
     win.notes_editor.tag_input.setFocus()
@@ -790,18 +807,11 @@ def test_escape_in_the_dock_clears_the_tag_field_and_returns_to_the_tree(qtbot, 
     assert win.tree.view.hasFocus()
 
 
-def test_dock_state_is_saved_and_restored(qtbot, tmp_path, review_file):
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    w = MainWindow(review_file, FIXTURE_ROOT, player=FakePlayer(), dialogs=FakeDialogs(), settings=settings)
-    qtbot.addWidget(w)
-    w.show()
-    qtbot.waitExposed(w)
+def test_dock_state_is_saved_and_restored(make_win):
+    w = make_win()  # both windows share the one settings.ini of the make_win fixture
     w.notes_dock.show()
     assert w.close()
-    w2 = MainWindow(review_file, FIXTURE_ROOT, player=FakePlayer(), dialogs=FakeDialogs(), settings=settings)
-    qtbot.addWidget(w2)
-    w2.show()
-    qtbot.waitExposed(w2)
+    w2 = make_win()
     assert w2.notes_dock.isVisible()
 
 

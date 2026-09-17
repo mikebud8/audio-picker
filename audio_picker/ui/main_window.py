@@ -127,7 +127,9 @@ class MainWindow(QMainWindow):
 
         self.notes_editor = AnnotationEditor(self.hub.store)
         self.notes_editor.changed.connect(self.hub.notify_changed)
-        self.notes_editor.escape_pressed.connect(self.tree.view.setFocus)  # only fires when the dock floats
+        # Belt and braces: this window's Escape shortcut already covers the dock, floating or not
+        # (a floating dock is a Tool window parented here), but the editor does not rely on that.
+        self.notes_editor.escape_pressed.connect(self.tree.view.setFocus)
         # The editor's minimum height grows with its chip rows, so a scroll area absorbs it
         # instead of letting the dock put a floor under the whole window.
         notes_scroll = QScrollArea()

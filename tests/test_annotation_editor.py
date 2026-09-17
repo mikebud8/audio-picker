@@ -292,6 +292,33 @@ def test_committing_a_tag_that_wraps_keeps_the_chip_area_open(qtbot, editor, sto
     assert editor.chips_container.minimumHeight() == wrapped
 
 
+def test_a_host_refreshing_on_changed_does_not_rebuild_the_chips(qtbot, editor):
+    """A host that fans `changed` back into `refresh()` must not reload while we are emitting."""
+    editor.set_path("packA/click.wav")
+    QApplication.processEvents()
+    chips = list(editor.chips)
+    assert chips, "the fixture path has a tag, so there is something to rebuild"
+    refreshes = []
+
+    def on_changed(rel: str) -> None:
+        refreshes.append(rel)
+        editor.refresh()
+
+    editor.changed.connect(on_changed)
+    editor.note.setFocus()
+    qtbot.keyClicks(editor.note, "abc")
+    assert refreshes == ["packA/click.wav"] * 3, "the host was called for every keystroke"
+    assert editor.chips == chips, "but the chips were never rebuilt"
+    assert "abc" in editor.note.toPlainText()
+
+
+def test_refresh_outside_an_edit_still_reloads(editor, store):
+    editor.set_path("packA/click.wav")
+    store.set_rating("packA/click.wav", 2)
+    editor.refresh()
+    assert [s.text() for s in editor.stars] == ["★", "★", "☆", "☆", "☆"]
+
+
 def test_completer_matches_anywhere_case_insensitively(editor):
     editor.set_path("packA/click.wav")
     editor.completer.setCompletionPrefix("I")

@@ -130,6 +130,7 @@ class AnnotationEditor(QWidget):
         self._store = store
         self._rel: str | None = None
         self._loading = False
+        self._emitting = False
         self.chips: list[TagChip] = []
         self.setMinimumWidth(220)
 
@@ -217,6 +218,8 @@ class AnnotationEditor(QWidget):
 
     def refresh(self) -> None:
         """Re-read the current path from the store; leaves the note cursor alone when the text is unchanged."""
+        if self._emitting:
+            return  # our own edit, already on screen: reloading would rebuild every chip per keystroke
         self._load()
 
     def escape(self) -> None:
@@ -315,8 +318,13 @@ class AnnotationEditor(QWidget):
     # -- editing --------------------------------------------------------------
 
     def _emit(self) -> None:
-        if self._rel is not None:
+        if self._rel is None:
+            return
+        self._emitting = True  # a host that fans `changed` back into `refresh()` must not reload under us
+        try:
             self.changed.emit(self._rel)
+        finally:
+            self._emitting = False
 
     def _on_star(self, n: int) -> None:
         if self._rel is None:
@@ -376,6 +384,13 @@ class AnnotationEditor(QWidget):
         self._emit()
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and obj is self.tag_input
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            event.accept()  # keep a host window's Return shortcut from stealing the commit
+            return True
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
             if obj is self.tag_input and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
