@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from ..library import AudioLibrary
 from ..model import ID_RE, PRIORITIES, ROLES, Review, Slot
 from ..paths import to_absolute, to_relative
+from .theme import error_css
 
 SHORTCUTS = [
     ("1 – 9", "Play candidate N; the key of the playing candidate stops it"),
@@ -230,7 +231,7 @@ class SlotEditorDialog(QDialog):
         layout.addLayout(form)
 
         self.problem = QLabel("")
-        self.problem.setStyleSheet("color: #c0392b")
+        self.problem.setStyleSheet(error_css())
         layout.addWidget(self.problem)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)

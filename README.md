@@ -20,6 +20,10 @@ All seven implementation steps of the design are in place: data model, paths,
 library index, check report, CSV import, export manifest, command line and
 the GUI. Run the tests with `.venv\Scripts\python -m pytest`.
 
+The test run also writes screenshots of the main window and dialogs in light
+and dark themes to `screenshots/` (git-ignored) for eyeballing layout and
+contrast. `ruff check` and `ruff format --check` keep the code tidy.
+
 ## Commands
 
 ```

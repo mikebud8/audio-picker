@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..model import Candidate
+from .theme import dim_css, error_css
 
 _ROW_STYLE = """
 CandidateRow { border: 1px solid palette(mid); border-left: 3px solid transparent; border-radius: 4px; }
@@ -78,12 +79,12 @@ class CandidateRow(QFrame):
         self.key = QLabel(str(number) if number <= 9 else "")
         self.key.setFixedWidth(18)
         self.key.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.key.setStyleSheet("font-weight: bold; color: palette(mid);")
+        self.key.setStyleSheet("font-weight: bold; " + dim_css())
         self.key.setToolTip(f"Press {number} to play" if number <= 9 else "No shortcut key beyond 9")
         self.name = QLabel()
         self.name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.meta = QLabel()
-        self.meta.setStyleSheet("color: palette(mid);")
+        self.meta.setStyleSheet(dim_css())
         self.play = QPushButton("Play")
         self.play.setToolTip("Play this candidate")
         self.play.clicked.connect(lambda: self.play_clicked.emit(self.cid))
@@ -121,7 +122,7 @@ class CandidateRow(QFrame):
             (("why", "why"), ("listen_for", "listen for"), ("proposed_use", "proposed use"))
         ):
             k = QLabel(f"{title}:")
-            k.setStyleSheet("color: palette(mid);")
+            k.setStyleSheet(dim_css())
             k.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
             v = QLabel()
             v.setWordWrap(True)
@@ -130,7 +131,7 @@ class CandidateRow(QFrame):
             self.details.addWidget(v, i, 1)
             self._detail_labels[key] = (k, v)
         notes_key = QLabel("notes:")
-        notes_key.setStyleSheet("color: palette(mid);")
+        notes_key.setStyleSheet(dim_css())
         notes_key.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
         self.notes = _GrowingNotes()
         self.notes.setAccessibleName(f"Notes for {self.cid}")
@@ -150,7 +151,7 @@ class CandidateRow(QFrame):
         self.name.setText(basename)
         self.missing = missing
         if missing:
-            self.name.setStyleSheet("color: #c0392b;")
+            self.name.setStyleSheet(error_css())
             self.name.setToolTip(f"Missing file: {candidate.path}")
         else:
             self.name.setStyleSheet("")

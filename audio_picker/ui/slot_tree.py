@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QModelIndex, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPalette, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QBrush, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..model import Review, Slot
+from .theme import dim_color
 
 GLYPHS = {"unselected": "○", "selected": "●", "rejected": "⊘", "gap": "△"}
 MISSING_GLYPH = "✕"
@@ -130,7 +131,7 @@ class SlotTree(QWidget):
         review = self._review
         listed = list(review.categories)
         extras = sorted({s.category for s in review.slots} - set(listed))
-        dim = QBrush(self.palette().color(QPalette.ColorRole.PlaceholderText) or QColor("gray"))
+        dim = QBrush(dim_color(self.palette()))
         for category in listed + extras:
             slots = [s for s in review.slots if s.category == category and self._matches(s)]
             if not slots:

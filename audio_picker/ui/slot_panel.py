@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from ..model import Review, Slot
 from .candidate_row import CandidateRow
+from .theme import dim_css
 
 PRIORITY_LABELS = {"first_pass": "first pass", "later": "later", "optional": "optional"}
 
@@ -49,12 +50,12 @@ class SlotPanel(QWidget):
         self.id_label.setStyleSheet("font-size: 16pt; font-weight: bold;")
         self.id_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.meta_label = QLabel()
-        self.meta_label.setStyleSheet("color: palette(mid);")
+        self.meta_label.setStyleSheet(dim_css())
         self.function_label = QLabel()
         self.function_label.setWordWrap(True)
         self.slot_notes = QLabel()
         self.slot_notes.setWordWrap(True)
-        self.slot_notes.setStyleSheet("color: palette(mid);")
+        self.slot_notes.setStyleSheet(dim_css())
         title_col.addWidget(self.id_label)
         title_col.addWidget(self.meta_label)
         title_col.addWidget(self.function_label)
@@ -87,7 +88,7 @@ class SlotPanel(QWidget):
         self.gap_notes.setMaximumHeight(140)
         self._rows_layout.addWidget(self.gap_notes)
         self.empty_label = QLabel("No slot selected. Adjust the filters or add a slot (Ctrl+N).")
-        self.empty_label.setStyleSheet("color: palette(mid);")
+        self.empty_label.setStyleSheet(dim_css())
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._rows_layout.addWidget(self.empty_label)
         self.add_button = QPushButton("Add candidate…")
