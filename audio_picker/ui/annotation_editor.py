@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..annotations import RATINGS, LibraryAnnotations, normalise_tag
+from ..annotations import RATINGS, LibraryAnnotations, canonical_key, normalise_tag
 from .path_delegate import path_html
 from .theme import dim_color, dim_css
 
@@ -213,7 +213,9 @@ class AnnotationEditor(QWidget):
         self.set_path(None)
 
     def set_path(self, rel: str | None) -> None:
-        self._rel = rel
+        # Canonical from here on: hosts match `changed` against their own paths literally, so a
+        # candidate spelled `packA\click.wav` would leave every other view stale until reselected.
+        self._rel = canonical_key(rel) if rel is not None else None
         self._load()
 
     def refresh(self) -> None:

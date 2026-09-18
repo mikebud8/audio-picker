@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from ..annotations import AnnotationsError, LibraryAnnotations
+from ..annotations import AnnotationsError, LibraryAnnotations, canonical_key
 
 AUTOSAVE_MS = 500
 
@@ -28,9 +28,9 @@ class AnnotationHub(QObject):
         self._timer.timeout.connect(self._autosave)
 
     def notify_changed(self, rel: str) -> None:
-        """Call after every write to the store."""
+        """Call after every write to the store. The path is canonicalised, as the store's keys are."""
         self._timer.start()
-        self.changed.emit(rel)
+        self.changed.emit(canonical_key(rel))
 
     def set_store(self, store: LibraryAnnotations) -> None:
         """Swap in the store for another root. The old one must already be settled or discarded."""

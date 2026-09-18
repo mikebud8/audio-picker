@@ -778,6 +778,14 @@ def test_dock_edit_of_a_backslash_path_writes_a_canonical_key(make_win, tmp_root
     assert w.hub.flush()
     assert LibraryAnnotations(tmp_root).get("packA/click.wav").rating == 3
     assert not LibraryAnnotations(tmp_root).read_only
+    # Both windows key on the emitted path, so the viewer must see the edit without a reselect.
+    w.actions["library"].trigger()
+    lw = w.library_window
+    w.notes_editor.stars[4].click()
+    assert lw._row_for("packA/click.wav").data(SUMMARY_ROLE).startswith("★5")
+    lw.list.setCurrentItem(lw._row_for("packA/click.wav"))
+    lw.editor.stars[1].click()
+    assert [s.text() for s in w.notes_editor.stars] == ["★", "★", "☆", "☆", "☆"]
 
 
 def test_dock_reflects_a_change_made_elsewhere(make_win, tmp_root):

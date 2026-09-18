@@ -319,6 +319,16 @@ def test_refresh_outside_an_edit_still_reloads(editor, store):
     assert [s.text() for s in editor.stars] == ["★", "★", "☆", "☆", "☆"]
 
 
+def test_a_backslash_path_is_canonicalised_at_the_boundary(qtbot, editor, store):
+    """Hosts compare the emitted path literally, so the editor must speak one spelling only."""
+    editor.set_path("packB\\hit.mp3")
+    assert editor.path == "packB/hit.mp3"
+    with qtbot.waitSignal(editor.changed) as blocker:
+        editor.stars[2].click()
+    assert blocker.args == ["packB/hit.mp3"]
+    assert store.get("packB/hit.mp3").rating == 3
+
+
 def test_completer_matches_anywhere_case_insensitively(editor):
     editor.set_path("packA/click.wav")
     editor.completer.setCompletionPrefix("I")
