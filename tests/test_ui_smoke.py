@@ -788,6 +788,20 @@ def test_dock_edit_of_a_backslash_path_writes_a_canonical_key(make_win, tmp_root
     assert [s.text() for s in w.notes_editor.stars] == ["★", "★", "☆", "☆", "☆"]
 
 
+def test_dock_edit_of_a_doubled_separator_path_writes_a_canonical_key(make_win, tmp_root, review_file):
+    """A hand-edited review can carry `packA//click.wav`; the sidecar must stay loadable."""
+    data = json.loads(review_file.read_text(encoding="utf-8"))
+    data["slots"][0]["candidates"][0]["path"] = "packA//click.wav"
+    review_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    w.notes_editor.stars[2].click()
+    assert w.hub.flush()
+    fresh = LibraryAnnotations(tmp_root)
+    assert not fresh.read_only
+    assert fresh.get("packA/click.wav").rating == 3
+
+
 def test_dock_reflects_a_change_made_elsewhere(make_win, tmp_root):
     w = make_win(tmp_root)
     w.notes_dock.show()

@@ -31,12 +31,17 @@ class AnnotationsError(Exception):
 
 
 def canonical_key(rel: str) -> str:
-    """The one spelling a path is stored under: forward slashes, whatever the caller passed.
+    """The one spelling a path is stored under, whatever the caller passed.
 
     A hand-edited review can carry `packA\\click.wav`, and a backslash key would make the
-    sidecar unloadable on the next start.
+    sidecar unloadable on the next start. One can also carry `packA//click.wav`: the loader
+    accepts that as a candidate path (empty components are neither `.` nor `..`), so save must
+    collapse the doubled separator too, or the key it writes would be rejected on reload. So:
+    backslashes become forward slashes, runs of `/` collapse to one, and a trailing `/` is
+    stripped (a path ending in a separator cannot name a file).
     """
-    return rel.replace("\\", "/")
+    key = re.sub(r"/+", "/", rel.replace("\\", "/"))
+    return key[:-1] if key.endswith("/") and len(key) > 1 else key
 
 
 def normalise_tag(raw: str) -> str:

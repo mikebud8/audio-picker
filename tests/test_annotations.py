@@ -11,6 +11,7 @@ from audio_picker.annotations import (
     Annotation,
     AnnotationsError,
     LibraryAnnotations,
+    canonical_key,
     normalise_tag,
 )
 
@@ -42,6 +43,25 @@ def test_normalise_tag_lowercases_strips_and_joins_whitespace():
 def test_normalise_tag_rejects_empty():
     with pytest.raises(ValueError):
         normalise_tag("   ")
+
+
+# -- canonical_key -----------------------------------------------------------------
+
+
+def test_canonical_key_collapses_separators():
+    assert canonical_key("packA//click.wav") == "packA/click.wav"
+    assert canonical_key("packA\\sub//x.wav") == "packA/sub/x.wav"
+    assert canonical_key("packA/") == "packA"
+    assert canonical_key("packA/click.wav") == "packA/click.wav"
+
+
+def test_add_tag_of_a_doubled_separator_path_round_trips_through_reload(tmp_path):
+    store = LibraryAnnotations(tmp_path)
+    store.add_tag("packA//click.wav", "ui")
+    store.save()
+    again = LibraryAnnotations(tmp_path)
+    assert not again.read_only
+    assert again.has_tag("packA/click.wav", "ui")
 
 
 # -- loading ---------------------------------------------------------------------
