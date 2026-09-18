@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from audio_picker.annotations import LibraryAnnotations
 from audio_picker.library import AudioLibrary
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "audio"
@@ -65,6 +66,11 @@ def test_search_empty_query_returns_everything(root):
 def test_search_is_capped(root):
     lib = AudioLibrary(root)
     assert lib.search("", limit=2) == ["loose.flac", "packA/click.wav"]
+    assert lib.search("", limit=0) == []
+    store = LibraryAnnotations(root)
+    store.add_tag("packA/click.wav", "ui")
+    store.add_tag("packB/hit.mp3", "ui")
+    assert lib.search("#ui", limit=1, annotations=store) == ["packA/click.wav"]
 
 
 def test_pack_folder_is_first_component():
@@ -93,3 +99,25 @@ def test_fixture_library_matches_example_review():
         "packA/confirm.ogg",
         "packB/hit.mp3",
     ]
+
+
+# -- tag terms -----------------------------------------------------------------------
+
+
+def test_hash_terms_match_tags_from_the_store(root):
+    lib = AudioLibrary(root)
+    store = LibraryAnnotations(root)
+    store.add_tag("packA/click.wav", "ui")
+    store.add_tag("packB/hit.mp3", "ui")
+    store.add_tag("packB/hit.mp3", "hit")
+    assert lib.search("#ui", annotations=store) == ["packA/click.wav", "packB/hit.mp3"]
+    assert lib.search("#UI packb", annotations=store) == ["packB/hit.mp3"]
+    assert lib.search("#ui #hit", annotations=store) == ["packB/hit.mp3"]
+    assert lib.search("#nope", annotations=store) == []
+    assert lib.search("#", annotations=store) == lib.paths, "a bare # is ignored"
+
+
+def test_hash_terms_match_nothing_without_a_store(root):
+    lib = AudioLibrary(root)
+    assert lib.search("#ui") == []
+    assert lib.search("packa") == ["packA/click.wav", "packA/sub/deep.OGG"]

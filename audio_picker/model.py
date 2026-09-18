@@ -187,14 +187,22 @@ def _check_enum(value: str, allowed: tuple[str, ...], where: str, key: str) -> N
         raise ReviewError(f"{where}: {key} {value!r} is not one of {', '.join(allowed)}")
 
 
-def _check_candidate_path(path: str, where: str) -> None:
+def relative_path_problem(path: str) -> str | None:
+    """None if `path` is a usable root-relative path, else a short description of what is wrong."""
     if not path:
-        raise ReviewError(f"{where}: path is empty")
+        return "path is empty"
     if path[0] in "/\\" or re.match(r"^[A-Za-z]:", path):
-        raise ReviewError(f"{where}: path {path!r} is absolute; paths are relative to root")
+        return f"path {path!r} is absolute; paths are relative to root"
     parts = re.split(r"[/\\]", path)
     if any(p in (".", "..") for p in parts):
-        raise ReviewError(f"{where}: path {path!r} contains a '.' or '..' component")
+        return f"path {path!r} contains a '.' or '..' component"
+    return None
+
+
+def _check_candidate_path(path: str, where: str) -> None:
+    problem = relative_path_problem(path)
+    if problem is not None:
+        raise ReviewError(f"{where}: {problem}")
 
 
 def from_dict(data: dict) -> Review:
@@ -339,11 +347,10 @@ def dumps(review: Review) -> str:
     return json.dumps(to_dict(review), indent=2, ensure_ascii=False) + "\n"
 
 
-def save(review: Review, path: Path) -> None:
-    """Atomic write: `<file>.tmp` beside the target, then os.replace."""
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write `data` to `path` through `<file>.tmp` beside it, then os.replace. Raises OSError."""
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
-    data = dumps(review).encode("utf-8")
     try:
         with open(tmp, "wb") as f:
             f.write(data)
@@ -351,3 +358,8 @@ def save(review: Review, path: Path) -> None:
     finally:
         if tmp.exists():
             tmp.unlink(missing_ok=True)
+
+
+def save(review: Review, path: Path) -> None:
+    """Atomic write: `<file>.tmp` beside the target, then os.replace."""
+    atomic_write_bytes(Path(path), dumps(review).encode("utf-8"))

@@ -1,4 +1,8 @@
-"""Main window: menus, splitter, shortcuts, autosave and file safety (design 13.1, 13.6, 13.8)."""
+"""Main window: menus, splitter, shortcuts, autosave and file safety (design 13.1, 13.6, 13.8).
+
+It also hosts the "Library notes" dock, whose editor reaches the library annotations through
+the annotation hub it owns and shares with the library viewer.
+"""
 
 from __future__ import annotations
 
@@ -10,31 +14,24 @@ from typing import Callable
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import (
-    QAbstractSpinBox,
-    QApplication,
-    QComboBox,
-    QLineEdit,
-    QMainWindow,
-    QPlainTextEdit,
-    QSplitter,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QDockWidget, QLabel, QMainWindow, QScrollArea, QSplitter, QVBoxLayout, QWidget
 
+from ..annotations import LibraryAnnotations
 from ..check import CheckReport, check_review
 from ..export import build_manifest
 from ..library import AudioLibrary
 from ..model import Candidate, Review, ReviewError, Slot, load, save
 from ..paths import resolve_root, to_absolute
 from ..player import PlayerState
+from .annotation_editor import AnnotationEditor
+from .annotation_hub import AUTOSAVE_MS, AnnotationHub
 from .dialogs import Dialogs
+from .keys import text_field_focused
+from .library_window import LibraryWindow
 from .slot_panel import SlotPanel
 from .slot_tree import SlotTree
+from .theme import error_css
 from .transport_bar import TransportBar
-
-AUTOSAVE_MS = 500
 
 
 def _fingerprint(path: Path) -> tuple[int, int, str] | None:
@@ -65,11 +62,16 @@ class MainWindow(QMainWindow):
         self.root = Path(root)
         self.review: Review = load(self.review_path)
         self.library = AudioLibrary(self.root)
+        self.hub = AnnotationHub(LibraryAnnotations(self.root), self)
+        self.hub.save_failed.connect(self._on_annotations_save_failed)
+        self.hub.reloaded.connect(self._on_annotations_reloaded)
         self._fingerprint = _fingerprint(self.review_path)
         self._dirty = False
         self._saving = False
+        self._settling = False
         self._current_slot: str | None = None
         self._playing_cid: str | None = None
+        self.library_window: LibraryWindow | None = None
         self._missing_slots: set[str] = set()
         self._missing_cids: set[str] = set()
         self.report: CheckReport = CheckReport()
@@ -90,9 +92,13 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
         else:
             self.resize(1200, 760)
+        state = self.settings.value("window/state")
+        if state is not None:
+            self.restoreState(state)
         self.settings.setValue("last_file", str(self.review_path))
 
         self._run_check()
+        self._report_annotations_load()
         self.tree.set_review(self.review, self._missing_slots)
         self._update_title()
         self.tree.view.setFocus()
@@ -118,7 +124,31 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(1, 7)
         self.splitter.setSizes([360, 840])
         self.setCentralWidget(self.splitter)
-        self.statusBar()
+        self.annotations_warning = QLabel()
+        self.annotations_warning.setStyleSheet(error_css())
+        self.annotations_warning.hide()
+        self.statusBar().addPermanentWidget(self.annotations_warning)
+
+        self.notes_editor = AnnotationEditor(self.hub.store)
+        self.notes_editor.changed.connect(self.hub.notify_changed)
+        # Belt and braces: this window's Escape shortcut already covers the dock, floating or not
+        # (a floating dock is a Tool window parented here), but the editor does not rely on that.
+        self.notes_editor.escape_pressed.connect(self.tree.view.setFocus)
+        # The editor's minimum height grows with its chip rows, so a scroll area absorbs it
+        # instead of letting the dock put a floor under the whole window.
+        notes_scroll = QScrollArea()
+        notes_scroll.setWidgetResizable(True)
+        notes_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        notes_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        notes_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Tab reaches the stars, not the viewport
+        notes_scroll.setMinimumWidth(240)
+        notes_scroll.setWidget(self.notes_editor)
+        self.notes_dock = QDockWidget("Library notes", self)
+        self.notes_dock.setObjectName("libraryNotesDock")
+        self.notes_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.notes_dock.setWidget(notes_scroll)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.notes_dock)
+        self.notes_dock.hide()
 
         self.tree.current_slot_changed.connect(self._on_current_slot)
         self.panel.play_clicked.connect(self._toggle_candidate)
@@ -131,6 +161,8 @@ class MainWindow(QMainWindow):
         self.panel.add_candidate_clicked.connect(self._add_candidate)
         self.transport.play_pause_clicked.connect(self._space)
         self.transport.stop_clicked.connect(self.player.stop)
+        self.panel.active_changed.connect(self._on_active_changed)
+        self.hub.changed.connect(self._on_annotation_changed)
 
     def _action(
         self,
@@ -147,7 +179,7 @@ class MainWindow(QMainWindow):
             action.setShortcuts([QKeySequence(k) for k in keys])
         action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         if single_key:
-            action.triggered.connect(lambda: None if self._text_focused() else handler())
+            action.triggered.connect(lambda: None if text_field_focused() else handler())
         else:
             action.triggered.connect(lambda: handler())
         self.addAction(action)
@@ -160,6 +192,7 @@ class MainWindow(QMainWindow):
         self._action("save", "&Save now", "Ctrl+S", self.flush)
         self._action("export", "&Export manifest…", None, self._export)
         self._action("rescan", "&Rescan library", None, self._rescan)
+        self._action("library", "&Library viewer…", None, self._open_library_window)
         self._action("quit", "&Quit", "Ctrl+Q", self.close)
         self._action("add_slot", "&Add slot…", "Ctrl+N", self._add_slot)
         self._action("edit_slot", "&Edit slot…", "Ctrl+E", self._edit_slot)
@@ -187,7 +220,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         bar = self.menuBar()
         file_menu = bar.addMenu("&File")
-        for key in ("open", "save", "export", "rescan"):
+        for key in ("open", "save", "export", "rescan", "library"):
             file_menu.addAction(self.actions[key])
         file_menu.addSeparator()
         file_menu.addAction(self.actions["quit"])
@@ -200,6 +233,8 @@ class MainWindow(QMainWindow):
         cand_menu = bar.addMenu("&Candidate")
         for key in ("add_candidate", "remove_candidate"):
             cand_menu.addAction(self.actions[key])
+        view_menu = bar.addMenu("&View")
+        view_menu.addAction(self.notes_dock.toggleViewAction())
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.actions["shortcuts"])
 
@@ -208,13 +243,6 @@ class MainWindow(QMainWindow):
         self.player.error.connect(self._on_player_error)
 
     # -- helpers -------------------------------------------------------------------
-
-    @staticmethod
-    def _text_focused() -> bool:
-        w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QPlainTextEdit, QTextEdit, QAbstractSpinBox)):
-            return True
-        return isinstance(w, QComboBox) and w.isEditable()
 
     def _slot(self) -> Slot | None:
         return self.review.slot(self._current_slot) if self._current_slot else None
@@ -253,11 +281,17 @@ class MainWindow(QMainWindow):
         self.panel.show_slot(slot, self.review, self._missing_cids)
         self.transport.set_now_playing(None, None)
 
+    def _on_active_changed(self, cid) -> None:
+        slot = self._slot()
+        candidate = slot.candidate(cid) if slot is not None and cid else None
+        self.notes_editor.set_path(candidate.path if candidate is not None else None)
+
     def _focus_search(self) -> None:
         self.tree.search.setFocus()
         self.tree.search.selectAll()
 
     def _escape(self) -> None:
+        self.notes_editor.escape()
         self.tree.view.setFocus()
 
     # -- mutations -----------------------------------------------------------------
@@ -281,11 +315,109 @@ class MainWindow(QMainWindow):
         if self._dirty:
             self._save()
 
-    def flush(self) -> None:
-        """Cancel the timer and save immediately if dirty."""
+    def flush(self) -> bool:
+        """Cancel the timers and save both files now if dirty. False if either is still unsaved."""
         self._save_timer.stop()
+        review_ok = self._save() if self._dirty else True
+        notes_ok = self.hub.flush()
+        return review_ok and notes_ok
+
+    # -- unsaved changes ------------------------------------------------------------------
+
+    def _unsaved_files(self) -> list[str]:
+        files = []
         if self._dirty:
-            self._save()
+            files.append(self.review_path.name)
+        if self.hub.store.dirty:
+            files.append(self.hub.store.path.name)
+        return files
+
+    def settle_unsaved(self, action: str) -> bool:
+        """Flush both files; on failure ask try again / discard / cancel. True means go ahead."""
+        self._settling = True
+        try:
+            while not self.flush():
+                answer = self.dialogs.unsaved(self, action, self._unsaved_files())
+                if answer == "discard":
+                    return True
+                if answer != "retry":
+                    return False
+            return True
+        finally:
+            self._settling = False
+
+    # -- library annotations ----------------------------------------------------------------
+
+    def _report_annotations_load(self) -> None:
+        """Show a malformed-sidecar error and keep a permanent warning while the store is read-only."""
+        store = self.hub.store
+        if store.load_error:
+            self.dialogs.error(self, "Library notes not loaded", store.load_error)
+        self.annotations_warning.setText(
+            f"Library notes not loaded: fix {store.path.name} and rescan" if store.read_only else ""
+        )
+        self.annotations_warning.setVisible(store.read_only)
+
+    def _on_annotation_changed(self, rel: str) -> None:
+        if self.notes_editor.path == rel:
+            self.notes_editor.refresh()
+
+    def _on_annotations_reloaded(self) -> None:
+        self._report_annotations_load()
+        self.notes_editor.set_store(self.hub.store)
+        self._on_active_changed(self.panel.active_candidate_id())
+
+    def _open_library_window(self) -> None:
+        """Show the library viewer, built once and kept: it shares this window's hub and player."""
+        self.player.stop()  # spec 5.3: the review window stops playback before showing the viewer
+        self._playing_cid = None
+        if self.library_window is not None:
+            self.library_window.show()
+            self.library_window.raise_()
+            self.library_window.activateWindow()
+            return
+        lw = LibraryWindow(
+            self.root,
+            self.library,
+            self.hub,
+            self.player,
+            self.settings,
+            owns_hub=False,
+            owns_player=False,
+            dialogs=self.dialogs,
+            parent=self,
+        )
+        # Two transport bars, one player: loop and volume have no player signal to follow, so
+        # mirror them both ways. Both signals only fire on a real change, so this cannot loop.
+        lw.transport.loop.toggled.connect(self.transport.loop.setChecked)
+        self.transport.loop.toggled.connect(lw.transport.loop.setChecked)
+        lw.transport.volume.valueChanged.connect(self.transport.volume.setValue)
+        self.transport.volume.valueChanged.connect(lw.transport.volume.setValue)
+        lw.play_requested.connect(self._on_viewer_play)
+        self.library_window = lw
+        lw.show()
+
+    def _close_library_window(self) -> None:
+        if self.library_window is not None:
+            lw = self.library_window
+            self.library_window = None
+            # Unsubscribe first: deleteLater only drops the hub connections once the event loop
+            # spins, and until then a retired viewer would rebuild its rows for the store we left.
+            lw.detach()
+            lw.close()
+            # Free it. Every other slot it holds is a bound method or a QObject slot, so Qt
+            # drops them all with the object.
+            lw.deleteLater()
+
+    def _on_viewer_play(self) -> None:
+        self._playing_cid = None
+        self.panel.set_playing(None)
+        self.transport.set_now_playing(None, None)
+
+    def _on_annotations_save_failed(self, message: str) -> None:
+        if self._settling:
+            return  # the unsaved-changes dialog names the file and offers a retry: one modal is enough
+        self.dialogs.error(self, "Save failed", message)
 
     def _changed_on_disk(self) -> bool:
         try:
@@ -323,7 +455,8 @@ class MainWindow(QMainWindow):
                 save(self.review, self.review_path)
             except OSError as e:
                 self._save_timer.stop()
-                self.dialogs.error(self, "Save failed", f"Could not write {self.review_path}:\n{e}")
+                if not self._settling:  # settling names the file and offers a retry: one modal is enough
+                    self.dialogs.error(self, "Save failed", f"Could not write {self.review_path}:\n{e}")
                 return False
             self._fingerprint = _fingerprint(self.review_path)
             self._dirty = False
@@ -359,6 +492,8 @@ class MainWindow(QMainWindow):
         if keep and self.tree.current_slot_id() == keep:
             self._on_current_slot(keep)
         self._update_title()
+        # A reload can keep the candidate id and change its path, which emits nothing.
+        self._on_active_changed(self.panel.active_candidate_id())
 
     # -- playback -------------------------------------------------------------------
 
@@ -491,7 +626,7 @@ class MainWindow(QMainWindow):
         if slot is None:
             return
         self.player.stop()
-        result = self.dialogs.add_candidate(self, self.review, self.library, self.root, self.player)
+        result = self.dialogs.add_candidate(self, self.review, self.library, self.root, self.player, self.hub)
         self.player.stop()
         if result is None:
             return
@@ -603,10 +738,14 @@ class MainWindow(QMainWindow):
         self._run_check()
         self.tree.set_missing(self._missing_slots)
         self.panel.set_missing(self._missing_cids)
-        self._status(f"Library rescanned: {len(self.library)} audio files. " + self.statusBar().currentMessage())
+        notes = self.hub.reload()
+        self._status(
+            f"Library rescanned: {len(self.library)} audio files; {notes}. " + self.statusBar().currentMessage()
+        )
 
     def _open_other(self) -> None:
-        self.flush()
+        if not self.settle_unsaved("open another review"):
+            return
         target = self.dialogs.open_review_path(self, self.review_path.parent)
         if target is None:
             return
@@ -617,10 +756,12 @@ class MainWindow(QMainWindow):
         except ReviewError as e:
             self.dialogs.error(self, "Cannot open review", str(e))
             return
+        self._close_library_window()  # only now: it is bound to the root, library and store we leave
         self.review_path = target
         self.root = root
         self.review = review
         self.library = AudioLibrary(root)
+        self.hub.set_store(LibraryAnnotations(root))
         self._fingerprint = _fingerprint(target)
         self._dirty = False
         self.settings.setValue("last_file", str(target))
@@ -629,10 +770,11 @@ class MainWindow(QMainWindow):
     # -- lifecycle --------------------------------------------------------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.flush()
-        if self._dirty and not self.dialogs.quit_without_saving(self):
+        if not self.settle_unsaved("quit"):
             event.ignore()
             return
+        self._close_library_window()
         self.player.stop()
         self.settings.setValue("window/geometry", self.saveGeometry())
+        self.settings.setValue("window/state", self.saveState())
         event.accept()

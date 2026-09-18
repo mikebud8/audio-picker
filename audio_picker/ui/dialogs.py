@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QPalette, QRegularExpressionValidator, QTextDocument
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -21,9 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QStyle,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -31,7 +29,10 @@ from PySide6.QtWidgets import (
 from ..library import AudioLibrary
 from ..model import ID_RE, PRIORITIES, ROLES, Review, Slot
 from ..paths import to_absolute, to_relative
-from .theme import error_css
+from .annotation_editor import AnnotationEditor
+from .annotation_hub import AnnotationHub
+from .path_delegate import PATH_ROLE, PathDelegate
+from .theme import dim_css, error_css
 
 SHORTCUTS = [
     ("1 – 9", "Play candidate N; the key of the playing candidate stops it"),
@@ -40,7 +41,7 @@ SHORTCUTS = [
     ("L", "Toggle loop"),
     ("Y / N", "Mark the active candidate yay / nay (again to clear)"),
     ("Enter", "Select the active candidate for the slot"),
-    ("Escape", "Leave a text field and return to the slot tree"),
+    ("Escape", "Leave a text field (clears a half-typed tag) and return to the slot tree"),
     ("Ctrl+Down / Ctrl+Up", "Next / previous slot (wraps)"),
     ("Ctrl+F", "Focus the slot search box"),
     ("Ctrl+S", "Save now"),
@@ -67,60 +68,41 @@ class SlotEdit:
     notes: str
 
 
-class _PathDelegate(QStyledItemDelegate):
-    """Draws a relative path with its first component (the pack folder) in bold."""
-
-    @staticmethod
-    def _html(rel: str, color: str) -> str:
-        folder, sep, rest = rel.partition("/")
-        body = f"<b>{folder}</b>/{rest}" if sep else rel
-        return f'<span style="color: {color}">{body}</span>'
-
-    def _document(self, option: QStyleOptionViewItem, index, selected: bool = False) -> QTextDocument:
-        role = QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text
-        doc = QTextDocument()
-        doc.setDefaultFont(option.font)
-        doc.setDocumentMargin(2)
-        rel = index.data(Qt.ItemDataRole.UserRole) or index.data() or ""
-        doc.setHtml(self._html(rel, option.palette.color(role).name()))
-        return doc
-
-    def paint(self, painter, option: QStyleOptionViewItem, index) -> None:
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        opt.text = ""
-        style = opt.widget.style() if opt.widget else QStyle()
-        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
-        doc = self._document(opt, index, selected=bool(opt.state & QStyle.StateFlag.State_Selected))
-        painter.save()
-        painter.translate(opt.rect.left(), opt.rect.top() + (opt.rect.height() - doc.size().height()) / 2)
-        doc.drawContents(painter)
-        painter.restore()
-
-    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
-        doc = self._document(option, index)
-        return QSize(int(doc.idealWidth()), int(doc.size().height()))
-
-
 class AddCandidateDialog(QDialog):
-    def __init__(self, review: Review, library: AudioLibrary, root: Path, player, parent=None) -> None:
+    def __init__(
+        self,
+        review: Review,
+        library: AudioLibrary,
+        root: Path,
+        player,
+        hub: AnnotationHub,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add candidate")
-        self.resize(640, 480)
+        self.resize(920, 480)
         self._review = review
         self._library = library
         self._root = root
         self._player = player
+        self.hub = hub
         self._chosen: str | None = None
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        columns = QHBoxLayout()
+        outer.addLayout(columns, 1)
+        left = QWidget()
+        layout = QVBoxLayout(left)
+        layout.setContentsMargins(0, 0, 0, 0)
+        columns.addWidget(left, 1)
+
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search the audio library (every word must match)")
+        self.search.setPlaceholderText("Search the audio library (every word must match; #tag matches a tag)")
         self.search.textChanged.connect(self._refresh_results)
         layout.addWidget(self.search)
 
         self.results = QListWidget()
-        self.results.setItemDelegate(_PathDelegate(self.results))
+        self.results.setItemDelegate(PathDelegate(self.results))
         self.results.currentItemChanged.connect(self._on_current_result)
         self.results.itemDoubleClicked.connect(lambda _i: self._preview())
         layout.addWidget(self.results, 1)
@@ -148,34 +130,58 @@ class AddCandidateDialog(QDialog):
         form.addRow("Why", self.why)
         layout.addLayout(form)
 
+        right = QWidget()
+        right.setFixedWidth(280)
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        self.editor = AnnotationEditor(hub.store)
+        self.editor.changed.connect(hub.notify_changed)
+        self.editor.escape_pressed.connect(self.search.setFocus)
+        # The editor's minimum height grows with its chip rows; the scroll area absorbs that
+        # instead of letting a long tag list push the dialog taller.
+        editor_scroll = QScrollArea()
+        editor_scroll.setWidgetResizable(True)
+        editor_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        editor_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        editor_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Tab from Why reaches the stars, not the viewport
+        editor_scroll.setWidget(self.editor)
+        self.notes_hint = QLabel("Notes are saved to the library even if you cancel.")
+        self.notes_hint.setWordWrap(True)
+        self.notes_hint.setStyleSheet(dim_css())
+        self.notes_hint.setContentsMargins(8, 0, 8, 4)
+        right_layout.addWidget(editor_scroll, 1)
+        right_layout.addWidget(self.notes_hint)
+        columns.addWidget(right)
+
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
-        layout.addWidget(self.buttons)
+        outer.addWidget(self.buttons)
 
         self._refresh_results("")
         self.search.setFocus()
 
     def _refresh_results(self, query: str) -> None:
         self.results.clear()
-        for rel in self._library.search(query):
+        for rel in self._library.search(query, annotations=self.hub.store):
             item = QListWidgetItem(rel)
             folder = AudioLibrary.pack_folder(rel)
             pack = next((p.name for p in self._review.packs.values() if p.folder == folder), None)
             item.setToolTip(f"Pack: {pack}" if pack else "No pack matches this folder")
-            item.setData(Qt.ItemDataRole.UserRole, rel)
+            item.setData(PATH_ROLE, rel)
             self.results.addItem(item)
 
     def _on_current_result(self, current: QListWidgetItem | None, _previous) -> None:
         if current is not None:
-            self._set_chosen(current.data(Qt.ItemDataRole.UserRole))
+            self._set_chosen(current.data(PATH_ROLE))
 
     def _set_chosen(self, rel: str | None, note: str = "") -> None:
         self._chosen = rel
         self.chosen_label.setText(rel or note or "No file chosen")
         self.preview.setEnabled(rel is not None)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(rel is not None)
+        self.editor.set_path(rel)
 
     def _preview(self) -> None:
         if self._chosen:
@@ -191,6 +197,10 @@ class AddCandidateDialog(QDialog):
         if not rel:
             self._set_chosen(None, f"Not under the audio root: {name}")
             return
+        # A stale highlight would claim a different file than the one now in the editor.
+        self.results.blockSignals(True)
+        self.results.setCurrentItem(None)
+        self.results.blockSignals(False)
         self._set_chosen(rel)
 
     def result_value(self) -> AddCandidateResult | None:
@@ -315,8 +325,24 @@ class Dialogs:
             return "overwrite"
         return "cancel"
 
-    def quit_without_saving(self, parent: QWidget | None) -> bool:
-        return self.confirm(parent, "Quit", "The review could not be saved. Quit without saving?")
+    def unsaved(self, parent: QWidget | None, action: str, files: list[str]) -> str:
+        """Files could not be saved. Returns "retry", "discard" or "cancel"."""
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Unsaved changes")
+        box.setText(f"{' and '.join(files)} could not be saved.")
+        box.setInformativeText(f"Try again, or discard the unsaved changes and {action}.")
+        retry = box.addButton("Try again", QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton(f"Discard and {action}", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is retry:
+            return "retry"
+        if clicked is discard:
+            return "discard"
+        return "cancel"
 
     def export_path(self, parent: QWidget | None, start: Path) -> Path | None:
         name, _ = QFileDialog.getSaveFileName(parent, "Export manifest", str(start), "JSON (*.json)")
@@ -327,20 +353,21 @@ class Dialogs:
         return Path(name) if name else None
 
     def add_candidate(
-        self, parent, review: Review, library: AudioLibrary, root: Path, player
+        self, parent, review: Review, library: AudioLibrary, root: Path, player, hub: AnnotationHub
     ) -> AddCandidateResult | None:
-        dialog = AddCandidateDialog(review, library, root, player, parent)
+        dialog = AddCandidateDialog(review, library, root, player, hub, parent)
         try:
             accepted = dialog.exec() == QDialog.DialogCode.Accepted
             return dialog.result_value() if accepted else None
         finally:
             player.stop()  # a preview never outlives the dialog
+            dialog.deleteLater()  # otherwise every invocation leaves an editor parented to the window
 
     def edit_slot(self, parent, review: Review, slot: Slot | None) -> SlotEdit | None:
         dialog = SlotEditorDialog(review, slot, parent)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            return dialog.result_value()
-        return None
+        result = dialog.result_value() if dialog.exec() == QDialog.DialogCode.Accepted else None
+        dialog.deleteLater()
+        return result
 
     def shortcuts(self, parent: QWidget | None) -> None:
         ShortcutsDialog(parent).exec()

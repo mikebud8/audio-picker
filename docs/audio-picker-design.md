@@ -260,7 +260,12 @@ audio-picker gui REVIEW.json [--root DIR]
 audio-picker import-csv INPUT.csv -o REVIEW.json --root DIR --project NAME [--force]
 audio-picker export REVIEW.json [--root DIR] [-o MANIFEST.json] [--strict]
 audio-picker check REVIEW.json [--root DIR]
+audio-picker library --root DIR                  # browse, rate and tag the library
 ```
+
+Library annotations (rating, tags, note per file, stored in
+`audio-picker-library.json` in the audio root) are specified in
+`docs/superpowers/specs/2026-09-17-library-annotations-design.md`.
 
 Exit codes: 0 success; 1 validation or file error (message on stderr);
 2 argparse usage error. `export --strict` returns 1 if any `first_pass` slot
@@ -439,16 +444,19 @@ The UI depends on the `Player` interface only, so tests substitute a fake.
 leading `•` while unsaved changes exist (they exist for at most the autosave
 delay). A `QSplitter`: slot tree on the left (about 30%), slot panel on the
 right. Status bar shows the last message (autosave time, player errors, check
-summary). Window geometry and the last opened file are remembered with
+summary). A "Library notes" dock on the right (hidden until asked for) holds an
+annotation editor that follows the active candidate's file. Window geometry, the
+dock state and the last opened file are remembered with
 `QSettings("audio-picker", "audio-picker")`.
 
 Menu bar:
 
 - File: Open… (Ctrl+O), Save now (Ctrl+S), Export manifest… (runs `export`
-  to a chosen file), Rescan library, Quit.
+  to a chosen file), Rescan library, Library viewer… (section 5.3), Quit.
 - Slot: Add slot… (Ctrl+N), Edit slot… (Ctrl+E), Remove slot, Next slot
   (Ctrl+Down), Previous slot (Ctrl+Up).
 - Candidate: Add candidate… (Ctrl+Shift+N), Remove candidate.
+- View: Library notes (toggles the dock).
 - Help: Keyboard shortcuts (a dialog listing section 13.6).
 
 ### 13.2 Slot tree (`slot_tree.py`)
@@ -619,8 +627,10 @@ the timer stopped until the next mutation or flush. This is conflict
 *detection*, not merging.
 
 **Failures.** A save failure (permissions, disk) shows a modal error and keeps
-the dirty flag; quitting with a failed or cancelled save asks for
-confirmation ("Quit without saving?").
+the dirty flag; quitting or opening another review after a failed or cancelled
+save shows the unsaved-changes dialog, which names every file still unwritten
+(the review file, the library notes sidecar, or both) and offers "Try again",
+"Discard and `<action>`", or "Cancel".
 
 If `load` raises `ReviewError`, the GUI shows the message in a dialog and exits
 with code 1. It never "repairs" a file.
@@ -772,6 +782,9 @@ retired before any other code is written.
 - Waveform display and loop-seam preview (A/B at a chosen offset).
 - Copy/convert step driven by the manifest.
 - Multiple candidate id prefixes per review.
+- Library annotations phase two (multi-select and apply-tag-to-folder) and
+  phase three (tag and rating filters in Add Candidate); see the annotations
+  spec, section 9.
 
 ## 18. Implementation order
 

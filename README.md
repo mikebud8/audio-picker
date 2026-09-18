@@ -18,11 +18,15 @@ Python 3.11 or newer; PySide6 6.11.2 or newer (the version that passed the codec
 
 All seven implementation steps of the design are in place: data model, paths,
 library index, check report, CSV import, export manifest, command line and
-the GUI. Run the tests with `.venv\Scripts\python -m pytest`.
+the GUI, plus the library annotations feature (rating, tags and notes) on
+top. Run the tests with `.venv\Scripts\python -m pytest`; the suite covers the
+model, the command line, the GUI, the library annotations and the screenshots.
 
 The test run also writes screenshots of the main window and dialogs in light
-and dark themes to `screenshots/` (git-ignored) for eyeballing layout and
-contrast. `ruff check` and `ruff format --check` keep the code tidy.
+and dark themes, and of the Library notes dock, the widened Add Candidate
+dialog and the standalone library viewer, to `screenshots/` (git-ignored) for
+eyeballing layout and contrast. `ruff check` and `ruff format --check` keep
+the code tidy.
 
 ## Commands
 
@@ -32,6 +36,7 @@ audio-picker gui REVIEW.json [--root DIR]
 audio-picker import-csv INPUT.csv -o REVIEW.json --root DIR --project NAME [--force]
 audio-picker export REVIEW.json [--root DIR] [-o MANIFEST.json] [--strict]
 audio-picker check REVIEW.json [--root DIR]
+audio-picker library --root DIR                      # browse, rate and tag the library without a review
 ```
 
 Exit codes: 0 success, 1 validation or file error (message on stderr),
@@ -48,7 +53,7 @@ selection or a selected file is missing; the manifest is still written.
 | `L` | Toggle loop. |
 | `Y` / `N` | Mark the active candidate yay / nay (again to clear). |
 | `Enter` | Select the active candidate for the slot. |
-| `Escape` | Leave a text field and return to the slot tree. |
+| `Escape` | Leave a text field (clears a half-typed tag) and return to the slot tree. |
 | `Ctrl+Down` / `Ctrl+Up` | Next / previous slot in the filtered tree, wrapping. |
 | `Ctrl+F` | Focus the slot search box. |
 | `Ctrl+S` | Save now (edits autosave after half a second anyway). |
@@ -59,11 +64,61 @@ The *active* candidate is the one playing, else the last one played in this
 slot, else candidate 1. It has a highlighted left border. Single-key shortcuts
 are suppressed while a text field has focus.
 
+The standalone library viewer (`File, Library viewer…` or
+`audio-picker library --root DIR`) has its own, shorter set:
+
+| Key | Action |
+|---|---|
+| `Space` | Pause / resume; if nothing is loaded, play the current row. |
+| `S` | Stop. |
+| `L` | Toggle loop. |
+| `Ctrl+F` | Focus the search box. |
+| `Ctrl+S` | Save now. |
+| `F5` | Rescan the library. |
+| `Ctrl+W` | Close the viewer. |
+| `Escape` | Leave a text field (clears a half-typed tag) and return to the file list. |
+
 The harness from the codec check still exists:
 
 ```
 .venv\Scripts\python -m audio_picker.player FILE [FILE ...]
 ```
+
+## Library notes
+
+Any file in the library can carry a quality rating (1 to 5 stars, meaning
+how clean the recording is, not whether you like it), a set of tags and a
+note. They are stored in `audio-picker-library.json` in the audio root, so
+they belong to the library, not to one review, and survive reuse of the same
+packs in another project. The audio files and folders are never touched.
+
+Three places edit the same data:
+
+- **View, Library notes** in the review window shows a dock that follows the
+  active candidate.
+- The **Add candidate** dialog shows the same editor for the highlighted
+  result, and `#tag` in its search box matches a tag. Notes made there are
+  kept even if you cancel adding the candidate.
+- **File, Library viewer** (or `audio-picker library --root DIR`) opens a
+  standalone browser with a tag filter, a minimum-rating filter, `#tag`
+  search, playback with Space and `S`, and `F5` to rescan. When no search or
+  filter is active, annotated files that no longer exist on disk are listed
+  greyed at the end. Their annotations stay in the sidecar until you clear
+  them from the viewer.
+
+A tag is trimmed, lowercased and its internal spaces become hyphens, so
+"Foot Step" becomes `foot-step`. Enter or a comma commits the tag field, and
+it autocompletes from every tag already used anywhere in the library. A
+file whose rating, tags and note are all cleared drops out of the sidecar
+entirely, which is plain JSON you can commit alongside the packs.
+
+Edits autosave after half a second and on `Ctrl+S`. Quitting or opening
+another review first saves both the review and the library notes; if either
+cannot be written you are asked to try again, discard, or cancel. If the
+sidecar is malformed the app shows the error and keeps a warning in the
+status bar, library notes become read-only (every editor is disabled), and
+Rescan library (F5 in the viewer) retries the load. Rescan also reloads a
+hand-edited sidecar when nothing is unsaved.
 
 ## Codec check
 

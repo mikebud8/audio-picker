@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audio-picker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Desktop tool for auditioning and picking sound assets for a game"
 readme = "README.md"
 requires-python = ">=3.11"

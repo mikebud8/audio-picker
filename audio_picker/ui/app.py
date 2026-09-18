@@ -26,3 +26,31 @@ def run(review_path: Path, root: Path) -> int:
         return 1
     window.show()
     return app.exec()
+
+
+def run_library(root: Path) -> int:
+    """Open the standalone library viewer owning its own hub and player."""
+    ensure_media_backend()
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+
+    from ..annotations import LibraryAnnotations
+    from ..library import AudioLibrary
+    from .annotation_hub import AnnotationHub
+    from .library_window import LibraryWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setOrganizationName("audio-picker")
+    app.setApplicationName("audio-picker")
+    root = Path(root)
+    window = LibraryWindow(
+        root,
+        AudioLibrary(root),
+        AnnotationHub(LibraryAnnotations(root)),
+        Player(),
+        QSettings("audio-picker", "audio-picker"),
+        owns_hub=True,
+        owns_player=True,
+    )
+    window.show()
+    return app.exec()
