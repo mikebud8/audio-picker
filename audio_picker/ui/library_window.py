@@ -352,7 +352,7 @@ class LibraryWindow(QMainWindow):
         self.play_requested.emit()
         self._playing_rel = rel
         self.player.play(to_absolute(self.root, rel))
-        self.transport.set_now_playing(AudioLibrary.pack_folder(rel) or "library", rel.rsplit("/", 1)[-1])
+        self._show_now_playing(rel)
 
     def _space(self) -> None:
         state = self.player.state
@@ -363,12 +363,18 @@ class LibraryWindow(QMainWindow):
         else:
             self._play_current()
 
+    def _show_now_playing(self, rel: str) -> None:
+        self.transport.set_now_playing(AudioLibrary.pack_folder(rel) or "library", rel.rsplit("/", 1)[-1])
+
     def _on_player_state(self, state: PlayerState) -> None:
+        # STOPPED never forgets who is playing: setSource emits one on every source change, and
+        # dropping ownership there would leave our audio running when this window closes.
         if state is PlayerState.STOPPED:
-            self._playing_rel = None
             self.transport.set_now_playing(None, None)
         else:
             self._check_source()
+            if self._playing_rel is not None:
+                self._show_now_playing(self._playing_rel)
 
     def _on_source_changed(self, _source) -> None:
         self._check_source()
@@ -432,7 +438,7 @@ class LibraryWindow(QMainWindow):
                         return
             finally:
                 self._settling = False
-        if self.owns_player or self._playing_rel is not None:
+        if self.owns_player or (self._playing_rel is not None and self.player.state is not PlayerState.STOPPED):
             self.player.stop()  # never leave our own audio playing on a player we merely borrow
         self.settings.setValue("library_window/geometry", self.saveGeometry())
         event.accept()

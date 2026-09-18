@@ -45,6 +45,9 @@ class FakePlayer(QObject):
 
     def play(self, path: Path) -> None:
         self.calls.append(("play", Path(path)))
+        # QMediaPlayer.setSource stops first: a transient STOPPED reaches every slot before PLAYING.
+        if self.state is not PlayerState.STOPPED:
+            self._set(PlayerState.STOPPED)
         self.source = Path(path)
         self.source_changed.emit(self.source)
         self._set(PlayerState.PLAYING)
@@ -762,6 +765,19 @@ def test_dock_edit_goes_through_the_hub_and_autosaves(qtbot, make_win, tmp_root)
         w.notes_editor.stars[4].click()
     assert w.hub.store.get("packA/click.wav").rating == 5
     qtbot.waitUntil(lambda: (tmp_root / SIDECAR_NAME).exists(), timeout=3000)
+
+
+def test_dock_edit_of_a_backslash_path_writes_a_canonical_key(make_win, tmp_root, review_file):
+    """A hand-edited review can carry `packA\\click.wav`; the sidecar must stay loadable."""
+    data = json.loads(review_file.read_text(encoding="utf-8"))
+    data["slots"][0]["candidates"][0]["path"] = "packA\\click.wav"
+    review_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    w = make_win(tmp_root)
+    w.notes_dock.show()
+    w.notes_editor.stars[2].click()
+    assert w.hub.flush()
+    assert LibraryAnnotations(tmp_root).get("packA/click.wav").rating == 3
+    assert not LibraryAnnotations(tmp_root).read_only
 
 
 def test_dock_reflects_a_change_made_elsewhere(make_win, tmp_root):

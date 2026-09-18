@@ -313,3 +313,17 @@ def test_empty_store_saves_and_reloads_clean(tmp_path):
     assert again.annotated() == []
     assert again.vocabulary() == []
     assert not again.read_only
+
+
+def test_backslash_keys_are_normalised_on_write_and_read(tmp_path):
+    """A hand-edited review can carry a backslash path; the store must never key on one."""
+    store = LibraryAnnotations(tmp_path)
+    store.add_tag("packA\\click.wav", "ui")
+    store.set_rating("packA\\click.wav", 3)
+    assert store.get("packA/click.wav").tags == ["ui"]
+    assert store.has_tag("packA\\click.wav", "ui")
+    store.save()
+    again = LibraryAnnotations(tmp_path)
+    assert not again.read_only
+    assert again.get("packA/click.wav").rating == 3
+    assert again.annotated() == ["packA/click.wav"]

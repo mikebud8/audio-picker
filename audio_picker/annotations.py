@@ -30,6 +30,15 @@ class AnnotationsError(Exception):
     """
 
 
+def canonical_key(rel: str) -> str:
+    """The one spelling a path is stored under: forward slashes, whatever the caller passed.
+
+    A hand-edited review can carry `packA\\click.wav`, and a backslash key would make the
+    sidecar unloadable on the next start.
+    """
+    return rel.replace("\\", "/")
+
+
 def normalise_tag(raw: str) -> str:
     """Strip, lowercase, internal whitespace to '-'. Raises ValueError if nothing is left."""
     tag = _WS_RE.sub("-", raw.strip().lower())
@@ -190,14 +199,14 @@ class LibraryAnnotations:
 
     def get(self, rel: str) -> Annotation:
         """A copy; an empty Annotation for an unknown path."""
-        a = self._files.get(rel)
+        a = self._files.get(canonical_key(rel))
         return Annotation(a.rating, list(a.tags), a.note) if a is not None else Annotation()
 
     def has(self, rel: str) -> bool:
-        return rel in self._files
+        return canonical_key(rel) in self._files
 
     def has_tag(self, rel: str, tag: str) -> bool:
-        a = self._files.get(rel)
+        a = self._files.get(canonical_key(rel))
         return a is not None and tag in a.tags
 
     def vocabulary(self) -> list[str]:
@@ -224,6 +233,7 @@ class LibraryAnnotations:
 
     def set_rating(self, rel: str, rating: int | None) -> None:
         self._check_writable()
+        rel = canonical_key(rel)
         if rating is not None and (isinstance(rating, bool) or not isinstance(rating, int) or rating not in RATINGS):
             raise ValueError(f"rating must be 1 to 5 or None, got {rating!r}")
         if self.get(rel).rating == rating:
@@ -234,6 +244,7 @@ class LibraryAnnotations:
     def add_tag(self, rel: str, tag: str) -> str:
         """Normalise, add if absent, grow the vocabulary. Returns the normalised tag."""
         self._check_writable()
+        rel = canonical_key(rel)
         tag = normalise_tag(tag)
         entry = self._files.get(rel)
         if entry is not None and tag in entry.tags:
@@ -246,6 +257,7 @@ class LibraryAnnotations:
 
     def remove_tag(self, rel: str, tag: str) -> None:
         self._check_writable()
+        rel = canonical_key(rel)
         tag = normalise_tag(tag)
         entry = self._files.get(rel)
         if entry is None or tag not in entry.tags:
@@ -255,6 +267,7 @@ class LibraryAnnotations:
 
     def set_note(self, rel: str, note: str) -> None:
         self._check_writable()
+        rel = canonical_key(rel)
         if not isinstance(note, str):
             raise ValueError(f"note must be a string, got {type(note).__name__}")
         if self.get(rel).note == note:

@@ -256,6 +256,27 @@ def test_stopped_state_from_the_player_clears_now_playing(lw):
     assert lw.transport.now_playing.text() == "Nothing playing"
 
 
+def test_transient_stop_during_source_change_keeps_now_playing(lw):
+    """setSource emits STOPPED before PLAYING; that pair must not wipe our now-playing."""
+    lw.list.setCurrentRow(1)
+    lw.list.itemDoubleClicked.emit(lw.list.item(1))
+    lw.player.state_changed.emit(PlayerState.STOPPED)
+    lw.player.state_changed.emit(PlayerState.PLAYING)
+    assert "click.wav" in lw.transport.now_playing.text()
+
+
+def test_switching_files_keeps_playback_ownership(make_lw, root):
+    """The transient stop inside the second play must not hand the borrowed player back."""
+    w = make_lw(owns_hub=False, hub=AnnotationHub(LibraryAnnotations(root)))
+    w.list.setCurrentRow(1)
+    w.list.itemDoubleClicked.emit(w.list.item(1))
+    w.list.setCurrentRow(3)
+    w.list.itemDoubleClicked.emit(w.list.item(3))
+    assert "hit.mp3" in w.transport.now_playing.text()
+    assert w.close()
+    assert w.player.calls[-1] == ("stop",)  # our audio must not outlive the window
+
+
 # -- persistence and ownership ----------------------------------------------------------------
 
 
